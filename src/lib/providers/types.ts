@@ -1,6 +1,28 @@
-export type ProviderId = "tiktok" | "instagram" | "youtube" | "twitter";
+export type ProviderId =
+  | "tiktok"
+  | "instagram"
+  | "youtube"
+  | "twitter"
+  | "facebook"
+  | "threads"
+  | "reddit"
+  | "pinterest"
+  | "twitch"
+  | "snapchat";
 
-export const PROVIDER_IDS: ProviderId[] = ["tiktok", "instagram", "youtube", "twitter"];
+/** Display order everywhere in the product. */
+export const PROVIDER_IDS: ProviderId[] = [
+  "tiktok",
+  "instagram",
+  "youtube",
+  "twitter",
+  "facebook",
+  "threads",
+  "reddit",
+  "pinterest",
+  "twitch",
+  "snapchat",
+];
 
 /** A normalised short-form media item, regardless of which platform it came from. */
 export interface MediaItem {
@@ -57,6 +79,11 @@ export interface SocialProvider {
   /** Env var names required for real OAuth; when missing we run in demo mode. */
   envVars: { clientId: string; clientSecret: string };
   usesPkce: boolean;
+  /**
+   * True when the platform offers no third-party API for its short-form content, so only
+   * the demo catalogue is available. The UI says so instead of offering a live connection.
+   */
+  demoOnly?: boolean;
   buildAuthorizeUrl(creds: ProviderCredentials, params: AuthorizeParams): string;
   exchangeCode(
     creds: ProviderCredentials,

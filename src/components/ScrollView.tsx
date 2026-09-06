@@ -4,16 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Countdown } from "./Countdown";
+import { PlatformLogo } from "./PlatformLogo";
 import type { FeedPayload } from "@/lib/feed";
+import { openInNativeApp } from "@/lib/open-native";
+import { providerName } from "@/lib/providers/meta";
 import type { MediaItem } from "@/lib/providers/types";
-
-const PROVIDER_COLORS: Record<string, string> = {
-  tiktok: "#ff2d55",
-  instagram: "#e1306c",
-  youtube: "#ff0000",
-  twitter: "#1d9bf0",
-};
-const PROVIDER_NAMES: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", twitter: "X" };
 
 function compact(n: number | undefined): string {
   if (n == null) return "–";
@@ -42,9 +37,24 @@ function Slide({ item, index, onVisible }: { item: MediaItem; index: number; onV
     return () => obs.disconnect();
   }, [item.key, onVisible]);
 
-  const color = PROVIDER_COLORS[item.provider] ?? "#888";
+  const name = providerName(item.provider);
+  const open = (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.preventDefault();
+    openInNativeApp(item);
+  };
   return (
     <article className="slide" ref={ref} data-index={index} aria-label={item.title}>
+      <a
+        className="slide-tap"
+        href={item.permalink}
+        onClick={open}
+        aria-label={`Open on ${name}`}
+        target="_blank"
+        rel="noopener noreferrer"
+      />
+      <span className="slide-source">
+        <PlatformLogo provider={item.provider} size={44} title={`From ${name}`} />
+      </span>
       <div className="slide-media">
         {item.videoUrl ? (
           <video src={item.videoUrl} poster={item.thumbnailUrl ?? undefined} playsInline muted loop autoPlay preload="metadata" />
@@ -58,10 +68,7 @@ function Slide({ item, index, onVisible }: { item: MediaItem; index: number; onV
       <div className="slide-shade" />
       <div className="slide-body">
         <div className="slide-meta">
-          <span className="chip">
-            <span className="chip-dot" style={{ background: color }} />
-            {PROVIDER_NAMES[item.provider] ?? item.provider}
-          </span>
+          <span className="chip">{name}</span>
           {item.durationSeconds != null && <span className="chip">{item.durationSeconds}s</span>}
           <span className="chip">{ago(item.publishedAt)}</span>
         </div>
@@ -75,8 +82,8 @@ function Slide({ item, index, onVisible }: { item: MediaItem; index: number; onV
           {item.metrics.comments != null && <span>{compact(item.metrics.comments)} comments</span>}
         </div>
         <div className="slide-actions">
-          <a className="btn" href={item.permalink} target="_blank" rel="noopener noreferrer">
-            Watch on {PROVIDER_NAMES[item.provider] ?? item.provider}
+          <a className="btn" href={item.permalink} onClick={open} target="_blank" rel="noopener noreferrer">
+            Open in {name}
           </a>
         </div>
       </div>
@@ -146,7 +153,7 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
     () =>
       initial.sources
         .filter((s) => s.count > 0)
-        .map((s) => `${s.count} ${PROVIDER_NAMES[s.provider] ?? s.provider}`)
+        .map((s) => `${s.count} ${providerName(s.provider)}`)
         .join(" · "),
     [initial.sources],
   );

@@ -35,6 +35,43 @@ const CREATORS: Record<ProviderId, Array<{ name: string; handle: string }>> = {
     { name: "Bea Costa", handle: "beacosta" },
     { name: "Owen Park", handle: "owenpark" },
   ],
+  facebook: [
+    { name: "Harbor Kitchen", handle: "harborkitchen" },
+    { name: "Nia Wallace", handle: "nia.wallace" },
+    { name: "Peak District Trails", handle: "peaktrails" },
+    { name: "Sam Ortega", handle: "samortega" },
+  ],
+  threads: [
+    { name: "Juno Park", handle: "junopark" },
+    { name: "Elliot Marsh", handle: "elliotmarsh" },
+    { name: "Wren Adeyemi", handle: "wren.adeyemi" },
+    { name: "Tomas Lindqvist", handle: "tomaslq" },
+  ],
+  reddit: [
+    { name: "r/oddlysatisfying", handle: "quietloops" },
+    { name: "r/woodworking", handle: "benchdog" },
+    { name: "r/aww", handle: "smallmammalfan" },
+    { name: "r/BeAmazed", handle: "everydayphysics" },
+    { name: "r/cooking", handle: "panfriedjoy" },
+  ],
+  pinterest: [
+    { name: "Fern & Fold", handle: "fernandfold" },
+    { name: "Matteo Ricci", handle: "matteo.ricci" },
+    { name: "Studio Ochre", handle: "studioochre" },
+    { name: "Hazel Byrne", handle: "hazelbyrne" },
+  ],
+  twitch: [
+    { name: "pixelpanic", handle: "pixelpanic" },
+    { name: "LunaSpeedruns", handle: "lunaspeedruns" },
+    { name: "chef_kv", handle: "chef_kv" },
+    { name: "Orbital_Ollie", handle: "orbital_ollie" },
+  ],
+  snapchat: [
+    { name: "Dani Flores", handle: "daniflores" },
+    { name: "Kai Morrison", handle: "kaimorrison" },
+    { name: "Zara Quinn", handle: "zaraquinn" },
+    { name: "Milo Tan", handle: "milotan" },
+  ],
 };
 
 const TOPICS = [
@@ -110,6 +147,18 @@ function permalinkFor(provider: ProviderId, handle: string, id: string): string 
       return `https://www.youtube.com/shorts/${id}`;
     case "twitter":
       return `https://x.com/${handle}/status/${id}`;
+    case "facebook":
+      return `https://www.facebook.com/reel/${id}`;
+    case "threads":
+      return `https://www.threads.net/@${handle}/post/${id}`;
+    case "reddit":
+      return `https://www.reddit.com/r/${handle}/comments/${id}/`;
+    case "pinterest":
+      return `https://www.pinterest.com/pin/${id}/`;
+    case "twitch":
+      return `https://clips.twitch.tv/${id}`;
+    case "snapchat":
+      return `https://www.snapchat.com/spotlight/${id}`;
   }
 }
 

@@ -1,6 +1,6 @@
 import { decrypt, encrypt } from "./crypto";
 import { getDb, now, type ConnectionRow } from "./db";
-import { credentialsFor, getProvider, PROVIDERS } from "./providers";
+import { credentialsFor, enabledProviders, getProvider, PROVIDERS } from "./providers";
 import { demoItems } from "./providers/demo";
 import type { MediaItem, OAuthTokens, ProviderId } from "./providers/types";
 
@@ -16,6 +16,8 @@ export interface ConnectionSummary {
   demo: boolean;
   /** Whether real OAuth credentials are configured server-side for this platform. */
   credentialsConfigured: boolean;
+  /** Platform has no third-party content API; only the demo catalogue exists. */
+  demoOnly: boolean;
   displayName: string | null;
   connectedAt: number | null;
 }
@@ -23,8 +25,8 @@ export interface ConnectionSummary {
 export function listConnections(userId: string): ConnectionSummary[] {
   const rows = getDb().prepare("SELECT * FROM connections WHERE user_id = ?").all(userId) as unknown as ConnectionRow[];
   const byProvider = new Map(rows.map((r) => [r.provider, r]));
-  return (Object.keys(PROVIDERS) as ProviderId[]).map((id) => {
-    const p = PROVIDERS[id];
+  return enabledProviders().map((p) => {
+    const id = p.id;
     const row = byProvider.get(id);
     return {
       provider: id,
@@ -34,6 +36,7 @@ export function listConnections(userId: string): ConnectionSummary[] {
       connected: Boolean(row),
       demo: row ? row.demo === 1 : false,
       credentialsConfigured: credentialsFor(p) !== null,
+      demoOnly: Boolean(p.demoOnly),
       displayName: row?.display_name ?? null,
       connectedAt: row?.connected_at ?? null,
     };

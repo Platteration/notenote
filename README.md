@@ -2,8 +2,10 @@
 
 One curated hour of short-form video from the social accounts you connect. Then it's gone.
 
-The Daily Scroll pulls clips from TikTok, Instagram, YouTube and X, merges them into a single
-balanced feed, and opens that feed for **exactly sixty minutes a day** at a time you choose.
+The Daily Scroll pulls clips from TikTok, Instagram, YouTube, X, Facebook, Threads, Reddit,
+Pinterest and Twitch, merges them into a single balanced feed, and opens that feed for
+**exactly sixty minutes a day** at a time you choose. Every clip carries the logo of the
+platform it came from, and tapping it opens the clip in that platform's native app.
 Outside the window there is nothing to scroll: the API answers `423 Locked` and the UI shows a
 countdown.
 
@@ -52,13 +54,32 @@ provider reads, and what the demo mode stands in for:
 |-----------|-------------------------------------------------|--------------------------------------------|
 | YouTube   | Shorts from channels you subscribe to           | YouTube Data API v3 (`youtube.readonly`)   |
 | X         | Short videos on your home timeline              | X API v2 reverse-chronological timeline    |
+| Reddit    | Video posts on your home feed                   | Reddit API (`/best`)                       |
+| Twitch    | Recent clips from channels you follow           | Helix (`channels/followed`, `clips`)       |
 | TikTok    | Your own recent published videos                | Display API (`video.list`)                 |
 | Instagram | Reels from your own account                     | Instagram API with Instagram Login         |
+| Facebook  | Reels and videos from your own profile          | Graph API (`me/videos`, needs App Review)  |
+| Threads   | Video posts from your own account               | Threads API (`me/threads`)                 |
+| Pinterest | Video pins from your own account                | Pinterest API v5 (`pins`)                  |
+| Snapchat  | Spotlight has no third-party API                | Demo catalogue only                        |
 
 Set the credentials for a platform in `.env` and the **Try demo** button becomes **Connect**.
 Register `{APP_BASE_URL}/api/connect/<provider>/callback` as the redirect URI on each
 developer portal. Any platform left unconfigured serves a deterministic, daily-changing demo
-catalogue so the whole product can be explored without keys.
+catalogue so the whole product can be explored without keys. Operators can restrict which
+platforms appear at all with `ENABLED_PROVIDERS=youtube,reddit,...` (default: all).
+
+### Opening clips in the native app
+
+Tapping a slide (or its **Open in …** button) hands the clip to the platform's app. On iOS and
+Android the app's URL scheme is tried first (`vnd.youtube://`, `twitter://status`,
+`instagram://media`, `snssdk1233://` for TikTok, `pinterest://pin`, `reddit://`, `fb://`,
+`twitch://`); if nothing claims it within a moment the https permalink is loaded instead, which
+the OS routes to the app through universal/app links when it is installed. On desktop the
+permalink opens in a new tab. Platforms without a dependable scheme (Threads, Snapchat) go
+straight to the permalink.
+
+Logos are from [Simple Icons](https://simpleicons.org) (CC0).
 
 ## API
 
@@ -92,7 +113,9 @@ src/components/     Client components (scroll view, countdowns, forms)
 src/lib/window.ts   The one-hour window, timezone-aware
 src/lib/curation.ts Scoring, dedupe, platform balancing
 src/lib/feed.ts     Daily feed generation, freezing, seen tracking
-src/lib/providers/  One OAuth + fetch adapter per platform, plus the demo catalogue
+src/lib/providers/  One OAuth + fetch adapter per platform, the demo catalogue, and
+                    meta.ts (client-safe names, logos, native deep links)
+src/lib/open-native.ts  Tap-to-open: app scheme first, permalink fallback
 src/lib/db.ts       SQLite schema (node:sqlite)
 test/               Unit tests
 ```

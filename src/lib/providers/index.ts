@@ -1,13 +1,53 @@
+import { facebook } from "./facebook";
 import { instagram } from "./instagram";
+import { pinterest } from "./pinterest";
+import { reddit } from "./reddit";
+import { snapchat } from "./snapchat";
+import { threads } from "./threads";
 import { tiktok } from "./tiktok";
+import { twitch } from "./twitch";
 import { twitter } from "./twitter";
 import { youtube } from "./youtube";
-import type { ProviderCredentials, ProviderId, SocialProvider } from "./types";
+import { PROVIDER_IDS, type ProviderCredentials, type ProviderId, type SocialProvider } from "./types";
 
-export const PROVIDERS: Record<ProviderId, SocialProvider> = { tiktok, instagram, youtube, twitter };
+export const PROVIDERS: Record<ProviderId, SocialProvider> = {
+  tiktok,
+  instagram,
+  youtube,
+  twitter,
+  facebook,
+  threads,
+  reddit,
+  pinterest,
+  twitch,
+  snapchat,
+};
 
+/**
+ * Platforms the operator allows in this deployment. `ENABLED_PROVIDERS` is a comma-separated
+ * allow-list of provider ids; unset (or "all") enables every platform.
+ */
+export function enabledProviderIds(env: Record<string, string | undefined> = process.env): ProviderId[] {
+  const raw = (env.ENABLED_PROVIDERS ?? "").trim();
+  if (!raw || raw.toLowerCase() === "all") return [...PROVIDER_IDS];
+  const wanted = new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return PROVIDER_IDS.filter((id) => wanted.has(id));
+}
+
+export function enabledProviders(): SocialProvider[] {
+  return enabledProviderIds().map((id) => PROVIDERS[id]);
+}
+
+/** Look up an *enabled* provider by id; disabled or unknown ids return null. */
 export function getProvider(id: string): SocialProvider | null {
-  return (PROVIDERS as Record<string, SocialProvider>)[id] ?? null;
+  const provider = (PROVIDERS as Record<string, SocialProvider>)[id] ?? null;
+  if (!provider) return null;
+  return enabledProviderIds().includes(provider.id) ? provider : null;
 }
 
 export function appBaseUrl(): string {
@@ -16,6 +56,7 @@ export function appBaseUrl(): string {
 
 /** Real OAuth credentials for a provider, or null when the app should run it in demo mode. */
 export function credentialsFor(provider: SocialProvider): ProviderCredentials | null {
+  if (provider.demoOnly) return null;
   const clientId = process.env[provider.envVars.clientId];
   const clientSecret = process.env[provider.envVars.clientSecret];
   if (!clientId || !clientSecret) return null;

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Countdown } from "./Countdown";
-import { ProviderMark } from "./ProviderMark";
+import { PlatformLogo } from "./PlatformLogo";
 import type { ConnectionSummary } from "@/lib/connections";
 import type { DailyWindow } from "@/lib/window";
 
@@ -24,9 +24,7 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
 
   const connectedParam = params.get("connected");
   const errorParam = params.get("error");
-  const errorText = errorParam
-    ? ERRORS[errorParam.replace(/^(tiktok|instagram|youtube|twitter)-/, "")] ?? "Something went wrong."
-    : null;
+  const errorText = errorParam ? ERRORS[errorParam.replace(/^[a-z]+-/, "")] ?? "Something went wrong." : null;
 
   async function disconnect(provider: string) {
     setBusy(provider);
@@ -70,14 +68,16 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
       {connections.map((c) => (
         <div className="card" key={c.provider}>
           <div className="provider">
-            <ProviderMark provider={c.provider} color={c.color} />
+            <PlatformLogo provider={c.provider} size={44} />
             <div className="provider-body">
               <strong>
                 {c.name}{" "}
                 {c.connected ? (
                   <span className={`badge ${c.demo ? "badge-demo" : "badge-live"}`}>{c.demo ? "demo" : "live"}</span>
                 ) : (
-                  <span className="badge badge-off">{c.credentialsConfigured ? "ready" : "demo available"}</span>
+                  <span className="badge badge-off">
+                    {c.demoOnly ? "no public api" : c.credentialsConfigured ? "ready" : "demo available"}
+                  </span>
                 )}
               </strong>
               <span>{c.connected ? c.displayName : c.capability}</span>
@@ -97,7 +97,8 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
 
       <p className="footer-note">
         Demo connections serve a generated catalogue that changes daily. Set the platform&apos;s client ID and secret in
-        the server environment to switch it to a real OAuth connection.
+        the server environment to switch it to a real OAuth connection. Operators can limit which platforms appear
+        with the <code>ENABLED_PROVIDERS</code> setting.
       </p>
     </>
   );
