@@ -72,6 +72,12 @@ const CREATORS: Record<ProviderId, Array<{ name: string; handle: string }>> = {
     { name: "Zara Quinn", handle: "zaraquinn" },
     { name: "Milo Tan", handle: "milotan" },
   ],
+  bluesky: [
+    { name: "Rosa Lindgren", handle: "rosa.bsky.social" },
+    { name: "Field Notes", handle: "fieldnotes.bsky.social" },
+    { name: "Idris Bello", handle: "idris.bsky.social" },
+    { name: "Clay & Kiln", handle: "clayandkiln.bsky.social" },
+  ],
 };
 
 const TOPICS = [
@@ -159,6 +165,8 @@ function permalinkFor(provider: ProviderId, handle: string, id: string): string 
       return `https://clips.twitch.tv/${id}`;
     case "snapchat":
       return `https://www.snapchat.com/spotlight/${id}`;
+    case "bluesky":
+      return `https://bsky.app/profile/${handle}/post/${id}`;
   }
 }
 

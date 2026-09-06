@@ -17,12 +17,75 @@ const ERRORS: Record<string, string> = {
   "exchange-failed": "The platform rejected the token exchange. Check the server logs.",
 };
 
+function CredentialForm({
+  connection,
+  onConnected,
+  onCancel,
+}: {
+  connection: ConnectionSummary;
+  onConnected: (c: ConnectionSummary[]) => void;
+  onCancel: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/connect/${connection.provider}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    const body = (await res.json().catch(() => ({}))) as { error?: string; connections?: ConnectionSummary[] };
+    setBusy(false);
+    if (!res.ok || !body.connections) {
+      setError(body.error ?? "Could not connect");
+      return;
+    }
+    onConnected(body.connections);
+  }
+
+  return (
+    <form className="cred-form" onSubmit={submit}>
+      {connection.credentialHelp && <p className="hint" style={{ marginBottom: 12 }}>{connection.credentialHelp}</p>}
+      {(connection.credentialFields ?? []).map((f) => (
+        <div className="field" key={f.name}>
+          <label htmlFor={`${connection.provider}-${f.name}`}>{f.label}</label>
+          <input
+            id={`${connection.provider}-${f.name}`}
+            type={f.type}
+            placeholder={f.placeholder}
+            required={f.required}
+            autoComplete={f.type === "password" ? "off" : "on"}
+            value={values[f.name] ?? ""}
+            onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+          />
+          {f.help && <span className="hint">{f.help}</span>}
+        </div>
+      ))}
+      {error && <p className="error">{error}</p>}
+      <div className="cred-actions">
+        <button className="btn btn-primary btn-sm" type="submit" disabled={busy}>
+          {busy ? "Connecting…" : `Connect ${connection.name}`}
+        </button>
+        <button className="btn btn-ghost btn-sm" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function ConnectionsPanel({ initial, window: win }: { initial: ConnectionSummary[]; window: DailyWindow }) {
   const params = useSearchParams();
   const [connections, setConnections] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
+  const [openForm, setOpenForm] = useState<string | null>(params.get("form"));
+  const [justConnected, setJustConnected] = useState<string | null>(params.get("connected"));
 
-  const connectedParam = params.get("connected");
   const errorParam = params.get("error");
   const errorText = errorParam ? ERRORS[errorParam.replace(/^[a-z]+-/, "")] ?? "Something went wrong." : null;
 
@@ -34,13 +97,14 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
   }
 
   const connectedCount = connections.filter((c) => c.connected).length;
+  const justConnectedRow = connections.find((c) => c.provider === justConnected);
 
   return (
     <>
-      {connectedParam && (
+      {justConnectedRow && (
         <p className="success">
-          Connected {connections.find((c) => c.provider === connectedParam)?.name ?? connectedParam}
-          {params.get("demo") ? " in demo mode" : ""}.
+          Connected {justConnectedRow.name}
+          {justConnectedRow.demo ? " in demo mode" : ""}.
         </p>
       )}
       {errorText && <p className="error">{errorText}</p>}
@@ -86,12 +150,41 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
               <button className="btn btn-danger btn-sm" disabled={busy === c.provider} onClick={() => disconnect(c.provider)} type="button">
                 Disconnect
               </button>
+            ) : c.connectMode === "credentials" ? (
+              <div className="provider-actions">
+                <button className="btn btn-sm" type="button" onClick={() => setOpenForm(openForm === c.provider ? null : c.provider)}>
+                  Connect
+                </button>
+                <a className="link-muted" href={`/api/connect/${c.provider}/start?demo=1`}>
+                  or try demo
+                </a>
+              </div>
+            ) : c.credentialsConfigured ? (
+              <div className="provider-actions">
+                <a className="btn btn-sm" href={`/api/connect/${c.provider}/start`}>
+                  Connect
+                </a>
+                <a className="link-muted" href={`/api/connect/${c.provider}/start?demo=1`}>
+                  or try demo
+                </a>
+              </div>
             ) : (
               <a className="btn btn-sm" href={`/api/connect/${c.provider}/start`}>
-                {c.credentialsConfigured ? "Connect" : "Try demo"}
+                Try demo
               </a>
             )}
           </div>
+          {!c.connected && openForm === c.provider && c.connectMode === "credentials" && (
+            <CredentialForm
+              connection={c}
+              onCancel={() => setOpenForm(null)}
+              onConnected={(list) => {
+                setConnections(list);
+                setOpenForm(null);
+                setJustConnected(c.provider);
+              }}
+            />
+          )}
         </div>
       ))}
 

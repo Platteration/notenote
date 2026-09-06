@@ -1,6 +1,7 @@
 import { decrypt, encrypt } from "./crypto";
 import { getDb, now, type ConnectionRow } from "./db";
-import { credentialsFor, enabledProviders, getProvider, PROVIDERS } from "./providers";
+import { enabledProviders, getProvider, liveAvailable, PROVIDERS } from "./providers";
+import { credentialsFor } from "./providers";
 import { demoItems } from "./providers/demo";
 import type { MediaItem, OAuthTokens, ProviderId } from "./providers/types";
 
@@ -14,10 +15,15 @@ export interface ConnectionSummary {
   capability: string;
   connected: boolean;
   demo: boolean;
-  /** Whether real OAuth credentials are configured server-side for this platform. */
+  /** Whether a live connection is possible: OAuth keys configured, or a credential form. */
   credentialsConfigured: boolean;
   /** Platform has no third-party content API; only the demo catalogue exists. */
   demoOnly: boolean;
+  /** How a live connection is made. */
+  connectMode: "oauth" | "credentials" | "none";
+  /** Form definition for credential-based platforms. */
+  credentialFields: Array<{ name: string; label: string; type: "text" | "password" | "url"; placeholder?: string; required?: boolean; help?: string }> | null;
+  credentialHelp: string | null;
   displayName: string | null;
   connectedAt: number | null;
 }
@@ -35,8 +41,11 @@ export function listConnections(userId: string): ConnectionSummary[] {
       capability: p.capability,
       connected: Boolean(row),
       demo: row ? row.demo === 1 : false,
-      credentialsConfigured: credentialsFor(p) !== null,
+      credentialsConfigured: liveAvailable(p),
       demoOnly: Boolean(p.demoOnly),
+      connectMode: p.demoOnly ? "none" : p.credentialConnect ? "credentials" : "oauth",
+      credentialFields: p.credentialConnect?.fields ?? null,
+      credentialHelp: p.credentialConnect?.help ?? null,
       displayName: row?.display_name ?? null,
       connectedAt: row?.connected_at ?? null,
     };
@@ -96,18 +105,20 @@ async function usableAccessToken(row: ConnectionRow): Promise<string> {
   const token = decrypt(row.access_token);
   const expiringSoon = row.expires_at != null && row.expires_at - now() < 5 * 60 * 1000;
   if (!expiringSoon || !provider.refresh) return token;
-  const creds = credentialsFor(provider);
+  // Credential-based platforms refresh with their own session token and need no app keys.
+  const creds = credentialsFor(provider) ?? (provider.credentialConnect ? { clientId: "", clientSecret: "", redirectUri: "" } : null);
   if (!creds) return token;
   // Instagram refreshes using the access token itself; others use a refresh token.
   const secret = row.refresh_token ? decrypt(row.refresh_token) : token;
-  const refreshed = await provider.refresh(creds, secret);
+  const refreshed = await provider.refresh(creds, secret, row.scope);
   if (!refreshed) return token;
   getDb()
-    .prepare("UPDATE connections SET access_token = ?, refresh_token = ?, expires_at = ? WHERE user_id = ? AND provider = ?")
+    .prepare("UPDATE connections SET access_token = ?, refresh_token = ?, expires_at = ?, scope = ? WHERE user_id = ? AND provider = ?")
     .run(
       encrypt(refreshed.accessToken),
       refreshed.refreshToken ? encrypt(refreshed.refreshToken) : row.refresh_token,
       refreshed.expiresAt,
+      refreshed.scope ?? row.scope,
       row.user_id,
       row.provider,
     );
@@ -140,7 +151,7 @@ export async function collectItems(userId: string, at: number = now()): Promise<
       try {
         const provider = getProvider(providerId)!;
         const token = await usableAccessToken(row);
-        const items = await provider.fetchItems(token, row.provider_user_id);
+        const items = await provider.fetchItems(token, row.provider_user_id, row.scope);
         db.prepare(
           `INSERT INTO provider_cache (user_id, provider, items_json, fetched_at) VALUES (?, ?, ?, ?)
            ON CONFLICT(user_id, provider) DO UPDATE SET items_json = excluded.items_json, fetched_at = excluded.fetched_at`,

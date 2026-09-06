@@ -18,10 +18,20 @@ export interface FeedPayload {
   sources: Array<{ provider: string; count: number; error: string | null }>;
 }
 
+export interface HourRecap {
+  dayKey: string;
+  closedAt: number;
+  total: number;
+  watched: number;
+  perProvider: Record<string, number>;
+}
+
 export interface LockedPayload {
   status: "locked";
   window: DailyWindow;
   connectedCount: number;
+  /** What happened during the most recent hour, if the user opened it. */
+  recap: HourRecap | null;
 }
 
 export function windowFor(userId: string, at: number = now()): DailyWindow {
@@ -36,7 +46,7 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
 
   if (!win.isOpen) {
     const connectedCount = (db.prepare("SELECT COUNT(*) AS c FROM connections WHERE user_id = ?").get(userId) as { c: number }).c;
-    return { status: "locked", window: win, connectedCount };
+    return { status: "locked", window: win, connectedCount, recap: lastRecap(userId, at) };
   }
 
   const existing = db
@@ -79,6 +89,32 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
   ).map((r) => r.item_key);
 
   return { status: "open", window: win, dayKey: win.dayKey, generatedAt, items, seenKeys: seenToday, sources };
+}
+
+/** Summary of the most recently closed hour (within the last two days). */
+export function lastRecap(userId: string, at: number = now()): HourRecap | null {
+  const row = getDb()
+    .prepare("SELECT * FROM daily_feeds WHERE user_id = ? AND closes_at <= ? ORDER BY closes_at DESC LIMIT 1")
+    .get(userId, at) as DailyFeedRow | undefined;
+  if (!row || at - row.closes_at > 2 * 86_400_000) return null;
+  const parsed = JSON.parse(row.items_json) as { items: MediaItem[] };
+  const watched = (
+    getDb()
+      .prepare("SELECT item_key FROM seen_items WHERE user_id = ? AND seen_at >= ? AND seen_at < ?")
+      .all(userId, row.opens_at, row.closes_at) as Array<{ item_key: string }>
+  ).map((r) => r.item_key);
+  const inFeed = new Set(parsed.items.map((i) => i.key));
+  const perProvider: Record<string, number> = {};
+  for (const it of parsed.items) {
+    if (watched.includes(it.key)) perProvider[it.provider] = (perProvider[it.provider] ?? 0) + 1;
+  }
+  return {
+    dayKey: row.day_key,
+    closedAt: row.closes_at,
+    total: parsed.items.length,
+    watched: watched.filter((k) => inFeed.has(k)).length,
+    perProvider,
+  };
 }
 
 export function markSeen(userId: string, itemKeys: string[], at: number = now()): number {

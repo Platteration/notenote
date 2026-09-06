@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "The Daily Scroll",
   description: "One curated hour of short-form video from your connected social accounts. Then it's gone.",
+  applicationName: "The Daily Scroll",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Daily Scroll" },
+  icons: { apple: "/icons/icon-192.png" },
 };
 
 export const viewport: Viewport = {

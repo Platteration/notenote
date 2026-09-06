@@ -12,17 +12,22 @@ import { currentUser } from "@/lib/session";
 
 type Ctx = { params: Promise<{ provider: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
   const user = await currentUser();
   if (!user) return NextResponse.redirect(`${appBaseUrl()}/?next=/connect`);
   const { provider: id } = await ctx.params;
   const provider = getProvider(id);
   if (!provider) return NextResponse.redirect(`${appBaseUrl()}/connect?error=unknown-provider`);
 
+  const wantsDemo = new URL(req.url).searchParams.get("demo") === "1";
   const creds = credentialsFor(provider);
-  if (!creds) {
+  if (wantsDemo || (!creds && !provider.credentialConnect)) {
     connectDemo(user.id, provider.id);
     return NextResponse.redirect(`${appBaseUrl()}/connect?connected=${provider.id}&demo=1`);
+  }
+  if (!creds) {
+    // Credential-based platform: the Connections page renders the form inline.
+    return NextResponse.redirect(`${appBaseUrl()}/connect?form=${provider.id}`);
   }
 
   const state = randomToken(24);

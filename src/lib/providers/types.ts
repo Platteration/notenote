@@ -8,7 +8,8 @@ export type ProviderId =
   | "reddit"
   | "pinterest"
   | "twitch"
-  | "snapchat";
+  | "snapchat"
+  | "bluesky";
 
 /** Display order everywhere in the product. */
 export const PROVIDER_IDS: ProviderId[] = [
@@ -22,6 +23,7 @@ export const PROVIDER_IDS: ProviderId[] = [
   "pinterest",
   "twitch",
   "snapchat",
+  "bluesky",
 ];
 
 /** A normalised short-form media item, regardless of which platform it came from. */
@@ -69,6 +71,26 @@ export interface AuthorizeParams {
   codeChallenge: string;
 }
 
+/** Field shown on the connect form for platforms that authenticate with user credentials. */
+export interface CredentialField {
+  name: string;
+  label: string;
+  type: "text" | "password" | "url";
+  placeholder?: string;
+  required?: boolean;
+  help?: string;
+}
+
+/**
+ * Platforms without a client-registration OAuth flow (Bluesky's AT Protocol uses per-user app
+ * passwords) connect through a small form instead of a redirect.
+ */
+export interface CredentialConnect {
+  fields: CredentialField[];
+  help: string;
+  authenticate(input: Record<string, string>): Promise<OAuthTokens>;
+}
+
 export interface SocialProvider {
   id: ProviderId;
   name: string;
@@ -84,15 +106,17 @@ export interface SocialProvider {
    * the demo catalogue is available. The UI says so instead of offering a live connection.
    */
   demoOnly?: boolean;
+  /** Present when the platform connects with user-supplied credentials rather than OAuth. */
+  credentialConnect?: CredentialConnect;
   buildAuthorizeUrl(creds: ProviderCredentials, params: AuthorizeParams): string;
   exchangeCode(
     creds: ProviderCredentials,
     code: string,
     codeVerifier: string | null,
   ): Promise<OAuthTokens>;
-  refresh?(creds: ProviderCredentials, refreshToken: string): Promise<OAuthTokens | null>;
-  /** Fetch recent short-form items for the connected account. */
-  fetchItems(accessToken: string, providerUserId: string): Promise<MediaItem[]>;
+  refresh?(creds: ProviderCredentials, refreshToken: string, scope?: string | null): Promise<OAuthTokens | null>;
+  /** Fetch recent short-form items for the connected account. `scope` is whatever was stored at connect time. */
+  fetchItems(accessToken: string, providerUserId: string, scope?: string | null): Promise<MediaItem[]>;
 }
 
 export const SHORT_FORM_MAX_SECONDS = 90;

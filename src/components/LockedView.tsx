@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Countdown } from "./Countdown";
+import { PlatformLogo } from "./PlatformLogo";
 import type { LockedPayload } from "@/lib/feed";
+import { providerName } from "@/lib/providers/meta";
 
 function formatLocal(ms: number, timezone: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -46,6 +48,27 @@ export function LockedView({ initial }: { initial: LockedPayload }) {
       <p>
         Opens {formatLocal(win.opensAt, win.timezone)}, closes {formatLocal(win.closesAt, win.timezone)} ({win.timezone}).
       </p>
+      {state.recap && (
+        <div className="card recap" style={{ textAlign: "left", marginTop: 24 }}>
+          <h2>Your last hour</h2>
+          <p>
+            You watched {state.recap.watched} of {state.recap.total} clips
+            {state.recap.watched === state.recap.total && state.recap.total > 0 ? ". The whole scroll." : "."}
+          </p>
+          {Object.keys(state.recap.perProvider).length > 0 && (
+            <div className="recap-row">
+              {Object.entries(state.recap.perProvider)
+                .sort((a, b) => b[1] - a[1])
+                .map(([provider, count]) => (
+                  <span className="recap-chip" key={provider} title={providerName(provider)}>
+                    <PlatformLogo provider={provider} size={22} />
+                    {count}
+                  </span>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
       {state.connectedCount === 0 ? (
         <div className="card" style={{ textAlign: "left", marginTop: 24 }}>
           <h2>Nothing to scroll yet</h2>

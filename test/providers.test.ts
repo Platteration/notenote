@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { enabledProviderIds, PROVIDERS } from "@/lib/providers";
+import { serviceFromScope } from "@/lib/providers/bluesky";
 import { demoItems } from "@/lib/providers/demo";
 import { detectPlatform, nativeUrl, PROVIDER_META } from "@/lib/providers/meta";
 import { PROVIDER_IDS } from "@/lib/providers/types";
@@ -23,6 +24,13 @@ describe("provider registry", () => {
 
   it("marks Snapchat as demo-only", () => {
     expect(PROVIDERS.snapchat.demoOnly).toBe(true);
+  });
+
+  it("connects Bluesky with an app password form and reads its service host from scope", async () => {
+    expect(PROVIDERS.bluesky.credentialConnect?.fields.map((f) => f.name)).toEqual(["identifier", "password", "service"]);
+    expect(serviceFromScope("service=https://pds.example.org")).toBe("https://pds.example.org");
+    expect(serviceFromScope(null)).toBe("https://bsky.social");
+    await expect(PROVIDERS.bluesky.credentialConnect!.authenticate({ identifier: "", password: "" })).rejects.toThrow(/required/);
   });
 });
 

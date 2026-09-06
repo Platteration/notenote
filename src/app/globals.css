@@ -152,6 +152,13 @@ input, select { font: inherit; }
 .closing h2 { font-size: 36px; margin: 0 0 10px; }
 
 .source-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.recap-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.recap-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 999px; background: var(--bg-elev-2); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cred-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.cred-form .field { margin-bottom: 10px; }
+.cred-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.provider-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.link-muted { color: var(--fg-faint); font-size: 12px; text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; }
 
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0; }
 .stat { background: var(--bg-elev-2); border-radius: 12px; padding: 12px; text-align: center; }

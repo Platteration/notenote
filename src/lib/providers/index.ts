@@ -1,3 +1,4 @@
+import { bluesky } from "./bluesky";
 import { facebook } from "./facebook";
 import { instagram } from "./instagram";
 import { pinterest } from "./pinterest";
@@ -21,6 +22,7 @@ export const PROVIDERS: Record<ProviderId, SocialProvider> = {
   pinterest,
   twitch,
   snapchat,
+  bluesky,
 };
 
 /**
@@ -56,13 +58,16 @@ export function appBaseUrl(): string {
 
 /** Real OAuth credentials for a provider, or null when the app should run it in demo mode. */
 export function credentialsFor(provider: SocialProvider): ProviderCredentials | null {
-  if (provider.demoOnly) return null;
+  if (provider.demoOnly || provider.credentialConnect) return null;
   const clientId = process.env[provider.envVars.clientId];
   const clientSecret = process.env[provider.envVars.clientSecret];
   if (!clientId || !clientSecret) return null;
   return { clientId, clientSecret, redirectUri: `${appBaseUrl()}/api/connect/${provider.id}/callback` };
 }
 
-export function isDemoMode(provider: SocialProvider): boolean {
-  return credentialsFor(provider) === null;
+/** Whether a live (non-demo) connection is possible for this provider in this deployment. */
+export function liveAvailable(provider: SocialProvider): boolean {
+  if (provider.demoOnly) return false;
+  if (provider.credentialConnect) return true;
+  return credentialsFor(provider) !== null;
 }

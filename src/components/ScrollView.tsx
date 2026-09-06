@@ -139,6 +139,31 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
 
   const close = useCallback(() => setClosed(true), []);
 
+  // Keyboard: ↓/j/space next, ↑/k previous, enter/o open the current clip in its app.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (closed) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const go = (delta: number) => {
+        const next = Math.max(0, Math.min(items.length, current + delta));
+        listRef.current?.querySelector<HTMLElement>(`[data-index="${next}"], .end-slide`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+      };
+      if (e.key === "ArrowDown" || e.key === "j" || e.key === " ") {
+        e.preventDefault();
+        go(1);
+      } else if (e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        go(-1);
+      } else if ((e.key === "Enter" || e.key === "o") && items[current]) {
+        e.preventDefault();
+        openInNativeApp(items[current]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closed, current, items]);
+
   // Time-remaining bar.
   const [pct, setPct] = useState(100);
   useEffect(() => {

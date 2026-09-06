@@ -2,8 +2,8 @@
 
 One curated hour of short-form video from the social accounts you connect. Then it's gone.
 
-The Daily Scroll pulls clips from TikTok, Instagram, YouTube, X, Facebook, Threads, Reddit,
-Pinterest and Twitch, merges them into a single balanced feed, and opens that feed for
+The Daily Scroll pulls clips from TikTok, Instagram, YouTube, X, Bluesky, Facebook, Threads,
+Reddit, Pinterest and Twitch, merges them into a single balanced feed, and opens that feed for
 **exactly sixty minutes a day** at a time you choose. Every clip carries the logo of the
 platform it came from, and tapping it opens the clip in that platform's native app.
 Outside the window there is nothing to scroll: the API answers `423 Locked` and the UI shows a
@@ -55,6 +55,7 @@ provider reads, and what the demo mode stands in for:
 | YouTube   | Shorts from channels you subscribe to           | YouTube Data API v3 (`youtube.readonly`)   |
 | X         | Short videos on your home timeline              | X API v2 reverse-chronological timeline    |
 | Reddit    | Video posts on your home feed                   | Reddit API (`/best`)                       |
+| Bluesky   | Video posts on your home timeline               | AT Protocol `getTimeline` (app password)   |
 | Twitch    | Recent clips from channels you follow           | Helix (`channels/followed`, `clips`)       |
 | TikTok    | Your own recent published videos                | Display API (`video.list`)                 |
 | Instagram | Reels from your own account                     | Instagram API with Instagram Login         |
@@ -62,6 +63,10 @@ provider reads, and what the demo mode stands in for:
 | Threads   | Video posts from your own account               | Threads API (`me/threads`)                 |
 | Pinterest | Video pins from your own account                | Pinterest API v5 (`pins`)                  |
 | Snapchat  | Spotlight has no third-party API                | Demo catalogue only                        |
+
+Bluesky needs no developer keys: users connect straight from the Connections page with an
+app password (Settings → Privacy and security → App passwords in the Bluesky app). The
+password is used once to open a session and is not stored.
 
 Set the credentials for a platform in `.env` and the **Try demo** button becomes **Connect**.
 Register `{APP_BASE_URL}/api/connect/<provider>/callback` as the redirect URI on each
@@ -81,6 +86,22 @@ straight to the permalink.
 
 Logos are from [Simple Icons](https://simpleicons.org) (CC0).
 
+## Keeping the hour instant
+
+Fetching five platforms on the first request of the hour can take a few seconds. Set
+`CRON_SECRET` and hit the pre-warm endpoint every 15 minutes; it refreshes the item cache for
+anyone whose hour opens within `PREWARM_MINUTES` (default 30):
+
+```
+*/15 * * * *  curl -s -X POST -H "Authorization: Bearer $CRON_SECRET" https://your.host/api/cron/prewarm
+```
+
+## On your phone
+
+The app ships a web manifest and icons, so "Add to Home Screen" installs it as a standalone,
+portrait-locked app that opens straight on the scroll. Inside the scroll, ↑/↓ (or j/k) move
+between clips and Enter opens the current one in its app.
+
 ## API
 
 | Method | Path                               | Purpose                                              |
@@ -90,8 +111,10 @@ Logos are from [Simple Icons](https://simpleicons.org) (CC0).
 | GET    | `/api/connections`                 | Platform connection status                           |
 | GET    | `/api/connect/:provider/start`     | Begin OAuth (or create a demo connection)            |
 | GET    | `/api/connect/:provider/callback`  | OAuth redirect target                                |
+| POST   | `/api/connect/:provider/credentials` | Credential-based connect (Bluesky app password)    |
+| POST   | `/api/cron/prewarm`                | Pre-fetch items for upcoming hours (`CRON_SECRET`)   |
 | DELETE | `/api/connect/:provider`           | Disconnect                                           |
-| GET    | `/api/feed`                        | Today's feed, or `423 Locked` with the next window   |
+| GET    | `/api/feed`                        | Today's feed, or `423 Locked` with the next window and a recap of the last hour |
 | POST   | `/api/feed/seen`                   | Record `{ keys: [...] }` as seen                     |
 | GET/PUT| `/api/settings`                    | Timezone, opening time (`HH:MM`), clips per day      |
 

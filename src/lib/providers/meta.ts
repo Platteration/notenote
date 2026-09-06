@@ -3,6 +3,7 @@
  * Nothing in here touches the network or Node APIs, so it can be imported by components.
  */
 import {
+  siBluesky,
   siFacebook,
   siInstagram,
   siPinterest,
@@ -37,6 +38,7 @@ export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
   pinterest: { name: "Pinterest", color: "#bd081c", logoColor: "#ffffff", logoPath: siPinterest.path },
   twitch: { name: "Twitch", color: "#9146ff", logoColor: "#ffffff", logoPath: siTwitch.path },
   snapchat: { name: "Snapchat", color: "#fffc00", logoColor: "#000000", logoPath: siSnapchat.path },
+  bluesky: { name: "Bluesky", color: "#1185fe", logoColor: "#ffffff", logoPath: siBluesky.path },
 };
 
 export function providerName(id: string): string {
@@ -82,6 +84,7 @@ export function nativeUrl(
       return `twitch://clip/${id}`;
     case "threads":
     case "snapchat":
+    case "bluesky":
       return null;
     default:
       return null;
