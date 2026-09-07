@@ -28,6 +28,21 @@ export async function destroySession(): Promise<void> {
   jar.delete(SESSION_COOKIE);
 }
 
+/** The signed-in session's token, so callers can exempt it when revoking the others. */
+export async function currentSessionToken(): Promise<string | null> {
+  const jar = await cookies();
+  return jar.get(SESSION_COOKIE)?.value ?? null;
+}
+
+/** How many sessions this account currently has open. */
+export function sessionCountFor(userId: string): number {
+  return (
+    getDb().prepare("SELECT COUNT(*) AS c FROM sessions WHERE user_id = ? AND expires_at > ?").get(userId, now()) as {
+      c: number;
+    }
+  ).c;
+}
+
 export async function currentUser(): Promise<UserRow | null> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;

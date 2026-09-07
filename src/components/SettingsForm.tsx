@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Countdown } from "./Countdown";
 import { NotificationSetting } from "./NotificationSetting";
+import { SecurityPanel } from "./SecurityPanel";
 import { chime, haptic } from "@/lib/effects";
 import type { Prefs, Settings } from "@/lib/settings";
 import { THEME_LABELS, THEME_NOTES, THEMES } from "@/lib/theme";
@@ -44,12 +45,14 @@ export function SettingsForm({
   min,
   max,
   email,
+  sessions,
 }: {
   initial: Settings;
   initialWindow: DailyWindow;
   min: number;
   max: number;
   email: string;
+  sessions: number;
 }) {
   const router = useRouter();
   const [timezone, setTimezone] = useState(initial.timezone);
@@ -208,6 +211,8 @@ export function SettingsForm({
         </p>
         <NotificationSetting />
       </div>
+
+      <SecurityPanel initialSessions={sessions} />
 
       <div className="card">
         <h2>Your data</h2>

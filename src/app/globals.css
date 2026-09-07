@@ -152,8 +152,8 @@ input, select { font: inherit; }
 .btn-sm { padding: 8px 14px; font-size: 13px; }
 .btn-block { width: 100%; }
 
-.error { color: var(--danger); font-size: 14px; margin: 8px 0; }
-.success { color: var(--ok); font-size: 14px; margin: 8px 0; }
+.error, p.error { color: var(--danger); font-size: 14px; margin: 8px 0; }
+.success, p.success { color: var(--ok); font-size: 14px; margin: 8px 0; }
 
 .tabs { display: inline-flex; background: var(--bg-elev); border-radius: 999px; padding: 4px; margin-bottom: 16px; }
 .tabs button { border: none; background: transparent; color: var(--fg-muted); padding: 8px 16px; border-radius: 999px; cursor: pointer; font-weight: 600; }

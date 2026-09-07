@@ -198,6 +198,8 @@ bundle. A test enforces that.
 | GET/POST/DELETE | `/api/muted`              | Muted creators                                       |
 | GET/POST/DELETE | `/api/push/subscribe`     | Web Push subscriptions for this device               |
 | GET    | `/api/push/key`                    | VAPID public key, or `configured: false`             |
+| POST   | `/api/account/password`            | Change the password; signs out every other device    |
+| GET/DELETE | `/api/account/sessions`        | Count signed-in devices, or sign out the others      |
 | GET    | `/api/account/export`              | Everything the app holds about you, as JSON          |
 | DELETE | `/api/account`                     | Delete the account and all its data                  |
 | DELETE | `/api/connect/:provider`           | Disconnect                                           |
@@ -245,6 +247,10 @@ real user out of their own account with a handful of wrong guesses. A much loose
 ceiling still catches a distributed attack. Credentials are never checked before the limit,
 because scrypt is deliberately expensive and that would turn sign-in into a CPU exhaustion
 vector.
+
+Changing a password revokes every other session, keeping only the device making the change.
+Leaving other sessions live would defeat the point of a hurried password change. Settings also
+shows how many devices are signed in and can sign out the rest without changing the password.
 
 The limiter lives in process, which suits the single-instance SQLite storage. Behind several
 instances it becomes per-instance and the effective limit is the sum, so a shared store or a
