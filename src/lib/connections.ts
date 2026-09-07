@@ -8,6 +8,33 @@ import type { MediaItem, OAuthTokens, ProviderId } from "./providers/types";
 /** How long fetched provider items are reused before hitting the platform again. */
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * Total time one platform gets to produce its items. Individual requests already time out,
+ * but some providers make several rounds of calls (YouTube walks subscriptions, then
+ * channels, then uploads, then videos), so the whole sequence needs its own ceiling.
+ */
+function providerBudgetMs(): number {
+  const configured = Number(process.env.PROVIDER_BUDGET_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 20_000;
+}
+
+/**
+ * Resolve with whatever the platform returns, or reject once the budget is spent. The
+ * underlying requests are left to die on their own timeouts; we simply stop waiting, so
+ * one slow platform cannot hold up the other nine.
+ */
+async function withBudget<T>(provider: string, work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${provider} took longer than ${ms}ms and was skipped`)), ms);
+  });
+  try {
+    return await Promise.race([work, budget]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface ConnectionSummary {
   provider: ProviderId;
   name: string;
@@ -150,8 +177,14 @@ export async function collectItems(userId: string, at: number = now()): Promise<
       }
       try {
         const provider = getProvider(providerId)!;
-        const token = await usableAccessToken(row);
-        const items = await provider.fetchItems(token, row.provider_user_id, row.scope);
+        const items = await withBudget(
+          provider.name,
+          (async () => {
+            const token = await usableAccessToken(row);
+            return provider.fetchItems(token, row.provider_user_id, row.scope);
+          })(),
+          providerBudgetMs(),
+        );
         db.prepare(
           `INSERT INTO provider_cache (user_id, provider, items_json, fetched_at) VALUES (?, ?, ?, ?)
            ON CONFLICT(user_id, provider) DO UPDATE SET items_json = excluded.items_json, fetched_at = excluded.fetched_at`,

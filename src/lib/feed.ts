@@ -149,7 +149,40 @@ export function markSeen(userId: string, itemKeys: string[], at: number = now())
   return n;
 }
 
-/** Remove feeds from previous days so nothing lingers past its hour. */
-export function purgeExpiredFeeds(at: number = now()): void {
-  getDb().prepare("DELETE FROM daily_feeds WHERE closes_at < ?").run(at - 86_400_000);
+/** How often the housekeeping sweep is worth running. */
+const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+let lastPurge = 0;
+
+export interface PurgeCounts {
+  feeds: number;
+  sessions: number;
+  oauthStates: number;
+}
+
+/**
+ * Housekeeping. Expired sessions and abandoned OAuth handshakes were accumulating with
+ * nothing to remove them; feeds are dropped a day after their hour so nothing lingers.
+ */
+export function purgeExpired(at: number = now()): PurgeCounts {
+  const db = getDb();
+  const feeds = db.prepare("DELETE FROM daily_feeds WHERE closes_at < ?").run(at - 86_400_000);
+  const sessions = db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(at);
+  const states = db.prepare("DELETE FROM oauth_states WHERE created_at < ?").run(at - 15 * 60 * 1000);
+  return {
+    feeds: Number(feeds.changes),
+    sessions: Number(sessions.changes),
+    oauthStates: Number(states.changes),
+  };
+}
+
+/** Called on ordinary requests, so it does its work at most once an hour. */
+export function purgeExpiredIfDue(at: number = now()): PurgeCounts | null {
+  if (at - lastPurge < PURGE_INTERVAL_MS) return null;
+  lastPurge = at;
+  return purgeExpired(at);
+}
+
+/** Only for tests. */
+export function resetPurgeSchedule(): void {
+  lastPurge = 0;
 }

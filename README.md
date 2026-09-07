@@ -86,6 +86,22 @@ straight to the permalink.
 
 Logos are from [Simple Icons](https://simpleicons.org) (CC0).
 
+## When a platform misbehaves
+
+Feed generation waits on every connected platform, so one hung API would otherwise hold the
+first request of the hour open indefinitely. Two deadlines prevent that:
+
+- `PROVIDER_TIMEOUT_MS` (default 8s) bounds a single call.
+- `PROVIDER_BUDGET_MS` (default 20s) bounds one platform's whole sequence of calls, since
+  YouTube walks subscriptions, then channels, then uploads, then videos.
+
+A platform that overruns is skipped rather than waited on. If it has cached items from an
+earlier fetch those are served instead, so a stalling platform degrades to slightly stale
+content rather than an empty feed, and the other platforms are unaffected.
+
+Expired sessions, abandoned OAuth handshakes and day-old feeds are swept by `purgeExpired`,
+which the pre-warm job runs on schedule and ordinary requests run at most once an hour.
+
 ## Keeping the hour instant
 
 Fetching five platforms on the first request of the hour can take a few seconds. Set

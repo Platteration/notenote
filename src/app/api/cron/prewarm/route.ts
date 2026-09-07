@@ -9,7 +9,7 @@
 import { json } from "@/lib/api";
 import { collectItems } from "@/lib/connections";
 import { getDb, now } from "@/lib/db";
-import { windowFor } from "@/lib/feed";
+import { purgeExpired, windowFor } from "@/lib/feed";
 
 export async function POST(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -19,6 +19,8 @@ export async function POST(req: Request) {
 
   const horizonMs = Number(process.env.PREWARM_MINUTES ?? 30) * 60 * 1000;
   const at = now();
+  // This runs on a schedule, so it is the reliable place to sweep expired rows.
+  const purged = purgeExpired(at);
   const users = getDb()
     .prepare("SELECT DISTINCT user_id FROM connections WHERE demo = 0")
     .all() as Array<{ user_id: string }>;
@@ -35,5 +37,5 @@ export async function POST(req: Request) {
       errors: results.filter((r) => r.error).map((r) => `${r.provider}: ${r.error}`),
     });
   }
-  return json({ checked: users.length, warmed: warmed.length, details: warmed });
+  return json({ checked: users.length, warmed: warmed.length, purged, details: warmed });
 }
