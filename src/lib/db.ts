@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS muted_creators (
   muted_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, provider, creator_handle)
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_open_day TEXT
+);
 CREATE TABLE IF NOT EXISTS provider_cache (
   user_id TEXT NOT NULL,
   provider TEXT NOT NULL,

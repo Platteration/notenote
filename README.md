@@ -96,11 +96,52 @@ anyone whose hour opens within `PREWARM_MINUTES` (default 30):
 */15 * * * *  curl -s -X POST -H "Authorization: Bearer $CRON_SECRET" https://your.host/api/cron/prewarm
 ```
 
+## One notification a day
+
+Set VAPID keys and the notification switch in settings becomes available. The app sends
+exactly one push per day, when your hour opens. There is no "you missed it", no streak
+warning and no re-engagement nudge — an app about ending shouldn't spend its notification
+budget dragging you back.
+
+```bash
+npx web-push generate-vapid-keys   # into VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
+```
+
+Then run both cron endpoints, guarded by the same `CRON_SECRET`:
+
+```
+*/15 * * * *  curl -sX POST -H "Authorization: Bearer $CRON_SECRET" https://your.host/api/cron/prewarm
+*   * * * *   curl -sX POST -H "Authorization: Bearer $CRON_SECRET" https://your.host/api/cron/notify
+```
+
+`notify` is idempotent per local day per device, and deletes subscriptions the push service
+reports as gone. Without VAPID keys the switch simply reports push as unavailable.
+
 ## On your phone
 
-The app ships a web manifest and icons, so "Add to Home Screen" installs it as a standalone,
-portrait-locked app that opens straight on the scroll. Inside the scroll, ↑/↓ (or j/k) move
-between clips and Enter opens the current one in its app.
+The app ships a web manifest, icons and a notifications-only service worker, so "Add to Home
+Screen" installs it as a standalone, portrait-locked app that opens straight on the scroll.
+Inside the scroll, ↑/↓ (or j/k) move between clips and Enter opens the current one in its app.
+
+## Saving, muting and streaks
+
+The hour is a hard stop, so two things exist to keep that bearable:
+
+- **Save** a clip during the hour and it moves to a shelf at `/saved` that is reachable at any
+  time of day. The shelf stores a copy of the clip's metadata, so it survives the feed being
+  purged. Saves are verified against your own frozen feeds server-side.
+- **Less like this** mutes a creator. Curation skips them in every future feed, and you can
+  unmute from the shelf.
+
+The locked screen shows a streak of consecutive days you turned up for your hour. Because the
+hour is fixed, it rewards the ritual rather than the volume — there is no way to inflate it by
+watching more.
+
+## Appearance
+
+Settings carries a theme (system, dark or light — the scroll itself stays black), a reduce-motion
+switch that also honours the OS preference, opt-out haptics and an opt-in chime. Preferences
+are applied server-side, so there is no flash of the wrong theme on load.
 
 ## API
 
@@ -113,6 +154,13 @@ between clips and Enter opens the current one in its app.
 | GET    | `/api/connect/:provider/callback`  | OAuth redirect target                                |
 | POST   | `/api/connect/:provider/credentials` | Credential-based connect (Bluesky app password)    |
 | POST   | `/api/cron/prewarm`                | Pre-fetch items for upcoming hours (`CRON_SECRET`)   |
+| POST   | `/api/cron/notify`                 | Send the daily "hour is open" push (`CRON_SECRET`)   |
+| GET/POST/DELETE | `/api/saved`              | The saved shelf                                      |
+| GET/POST/DELETE | `/api/muted`              | Muted creators                                       |
+| GET/POST/DELETE | `/api/push/subscribe`     | Web Push subscriptions for this device               |
+| GET    | `/api/push/key`                    | VAPID public key, or `configured: false`             |
+| GET    | `/api/account/export`              | Everything the app holds about you, as JSON          |
+| DELETE | `/api/account`                     | Delete the account and all its data                  |
 | DELETE | `/api/connect/:provider`           | Disconnect                                           |
 | GET    | `/api/feed`                        | Today's feed, or `423 Locked` with the next window and a recap of the last hour |
 | POST   | `/api/feed/seen`                   | Record `{ keys: [...] }` as seen                     |
@@ -139,6 +187,10 @@ src/lib/feed.ts     Daily feed generation, freezing, seen tracking
 src/lib/providers/  One OAuth + fetch adapter per platform, the demo catalogue, and
                     meta.ts (client-safe names, logos, native deep links)
 src/lib/open-native.ts  Tap-to-open: app scheme first, permalink fallback
+src/lib/library.ts  Saved shelf, muted creators, show-up streaks
+src/lib/push.ts     Web Push subscriptions and the one daily notification
+src/lib/effects.ts  Haptics, chimes and motion preferences
+public/sw.js        Service worker: notifications only, no caching
 src/lib/db.ts       SQLite schema (node:sqlite)
 test/               Unit tests
 ```

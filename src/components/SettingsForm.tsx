@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Countdown } from "./Countdown";
+import { NotificationSetting } from "./NotificationSetting";
 import { chime, haptic } from "@/lib/effects";
 import type { Prefs, Settings, Theme } from "@/lib/settings";
 import type { DailyWindow } from "@/lib/window";
@@ -194,6 +195,14 @@ export function SettingsForm({
             onChange={(v) => void updatePrefs({ sound: v })}
           />
         </div>
+      </div>
+
+      <div className="card">
+        <h2>Notifications</h2>
+        <p style={{ marginBottom: 6 }}>
+          The app sends exactly one message a day. There is no reminder that you missed it and no nudge to come back.
+        </p>
+        <NotificationSetting />
       </div>
 
       <div className="card">
