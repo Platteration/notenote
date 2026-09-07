@@ -5,6 +5,7 @@ process.env.SESSION_SECRET = "test-secret-for-settings-tests";
 
 const { signUp } = await import("@/lib/auth");
 const { DEFAULT_PREFS, getSettings, saveSettings } = await import("@/lib/settings");
+const { THEMES } = await import("@/lib/theme");
 
 let userId: string;
 
@@ -33,6 +34,14 @@ describe("preferences", () => {
     expect(s.windowStart).toBe("07:30");
     expect(s.feedSize).toBe(25);
     expect(s.prefs.reduceMotion).toBe(true);
+  });
+
+  it("accepts every offered theme, including the wireframe one", () => {
+    for (const theme of THEMES) {
+      saveSettings(userId, { prefs: { theme } });
+      expect(getSettings(userId).prefs.theme).toBe(theme);
+    }
+    expect(THEMES).toContain("wire");
   });
 
   it("rejects an unknown theme", () => {

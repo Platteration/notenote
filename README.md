@@ -139,9 +139,27 @@ watching more.
 
 ## Appearance
 
-Settings carries a theme (system, dark or light — the scroll itself stays black), a reduce-motion
-switch that also honours the OS preference, opt-out haptics and an opt-in chime. Preferences
-are applied server-side, so there is no flash of the wrong theme on load.
+Settings carries four themes, a reduce-motion switch that also honours the OS preference,
+opt-out haptics and an opt-in chime. Preferences are applied server-side, so there is no flash
+of the wrong theme on load.
+
+| Theme | What it is |
+|-------|------------|
+| System | Follows the device between light and dark |
+| Dark | Dark surfaces, full-colour platform marks |
+| Light | Warm paper tones for daylight |
+| Wire | Black ground, white line work, tinted accents |
+
+**Wire** is structural rather than a palette swap: every surface is described by its outline
+instead of a fill, buttons and switches become line work, and accents are pale tints used only
+where something needs telling apart. Because several brands are near-black (TikTok, X, Threads)
+and would vanish on black, each platform carries a separate `wireColor` in
+`src/lib/providers/meta.ts` — a legibility tint chosen for distinction, not a brand colour. A
+test asserts every one of them clears a luminance floor.
+
+Theme identity lives in `src/lib/theme.ts`, deliberately a leaf module with no imports, so
+client components can read the theme list without pulling the database layer into the browser
+bundle. A test enforces that.
 
 ## API
 

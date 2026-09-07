@@ -10,6 +10,11 @@ describe("provider registry", () => {
     for (const id of PROVIDER_IDS) {
       expect(PROVIDERS[id].id).toBe(id);
       expect(PROVIDER_META[id].logoPath.length).toBeGreaterThan(50);
+      // Every platform needs a wireframe tint bright enough to read on black.
+      const wire = PROVIDER_META[id].wireColor;
+      expect(wire).toMatch(/^#[0-9a-f]{6}$/);
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(wire.slice(i, i + 2), 16));
+      expect(0.2126 * r + 0.7152 * g + 0.0722 * b).toBeGreaterThan(120);
       const items = demoItems(id, "user", Date.UTC(2026, 8, 6), 5);
       expect(items).toHaveLength(5);
       for (const it of items) expect(it.permalink).toMatch(/^https:\/\//);

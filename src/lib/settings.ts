@@ -1,12 +1,14 @@
 import { getDb, now, type SettingsRow } from "./db";
+import { isTheme, THEMES, type Theme } from "./theme";
 import { isValidTimeZone, parseWindowStart } from "./window";
+
+export { THEMES };
+export type { Theme };
 
 export const DEFAULT_WINDOW_START = "20:00";
 export const DEFAULT_FEED_SIZE = 40;
 export const MIN_FEED_SIZE = 10;
 export const MAX_FEED_SIZE = 80;
-
-export type Theme = "system" | "dark" | "light";
 
 /**
  * Appearance and experience preferences. These never change *what* is in the feed or how
@@ -36,7 +38,7 @@ function parsePrefs(raw: string | null | undefined): Prefs {
   try {
     const parsed = JSON.parse(raw) as Partial<Prefs>;
     return {
-      theme: parsed.theme === "dark" || parsed.theme === "light" ? parsed.theme : DEFAULT_PREFS.theme,
+      theme: isTheme(parsed.theme) ? parsed.theme : DEFAULT_PREFS.theme,
       reduceMotion: typeof parsed.reduceMotion === "boolean" ? parsed.reduceMotion : DEFAULT_PREFS.reduceMotion,
       haptics: typeof parsed.haptics === "boolean" ? parsed.haptics : DEFAULT_PREFS.haptics,
       sound: typeof parsed.sound === "boolean" ? parsed.sound : DEFAULT_PREFS.sound,
@@ -76,7 +78,7 @@ export function saveSettings(userId: string, input: Partial<Omit<Settings, "pref
   if (input.prefs) {
     const p = input.prefs;
     if (p.theme !== undefined) {
-      if (p.theme !== "system" && p.theme !== "dark" && p.theme !== "light") throw new Error("Unknown theme");
+      if (!isTheme(p.theme)) throw new Error("Unknown theme");
       next.prefs.theme = p.theme;
     }
     for (const key of ["reduceMotion", "haptics", "sound"] as const) {

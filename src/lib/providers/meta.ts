@@ -23,22 +23,28 @@ export interface ProviderMeta {
   color: string;
   /** Logo colour; most brands read best in white on their colour, a few need dark. */
   logoColor: string;
+  /**
+   * Colour used by the wireframe theme, where the logo is drawn as an outline on black
+   * rather than filled. Several brands are near-black (TikTok, X, Threads) and would
+   * disappear, so these are legibility tints chosen for distinction, not brand colours.
+   */
+  wireColor: string;
   /** SVG path in a 24x24 viewBox (Simple Icons, CC0). */
   logoPath: string;
 }
 
 export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
-  tiktok: { name: "TikTok", color: "#010101", logoColor: "#ffffff", logoPath: siTiktok.path },
-  instagram: { name: "Instagram", color: "#e1306c", logoColor: "#ffffff", logoPath: siInstagram.path },
-  youtube: { name: "YouTube", color: "#ff0000", logoColor: "#ffffff", logoPath: siYoutube.path },
-  twitter: { name: "X", color: "#000000", logoColor: "#ffffff", logoPath: siX.path },
-  facebook: { name: "Facebook", color: "#0866ff", logoColor: "#ffffff", logoPath: siFacebook.path },
-  threads: { name: "Threads", color: "#000000", logoColor: "#ffffff", logoPath: siThreads.path },
-  reddit: { name: "Reddit", color: "#ff4500", logoColor: "#ffffff", logoPath: siReddit.path },
-  pinterest: { name: "Pinterest", color: "#bd081c", logoColor: "#ffffff", logoPath: siPinterest.path },
-  twitch: { name: "Twitch", color: "#9146ff", logoColor: "#ffffff", logoPath: siTwitch.path },
-  snapchat: { name: "Snapchat", color: "#fffc00", logoColor: "#000000", logoPath: siSnapchat.path },
-  bluesky: { name: "Bluesky", color: "#1185fe", logoColor: "#ffffff", logoPath: siBluesky.path },
+  tiktok: { name: "TikTok", color: "#010101", logoColor: "#ffffff", wireColor: "#25f4ee", logoPath: siTiktok.path },
+  instagram: { name: "Instagram", color: "#e1306c", logoColor: "#ffffff", wireColor: "#ff8ac4", logoPath: siInstagram.path },
+  youtube: { name: "YouTube", color: "#ff0000", logoColor: "#ffffff", wireColor: "#ff6b6b", logoPath: siYoutube.path },
+  twitter: { name: "X", color: "#000000", logoColor: "#ffffff", wireColor: "#ffffff", logoPath: siX.path },
+  facebook: { name: "Facebook", color: "#0866ff", logoColor: "#ffffff", wireColor: "#6ea8ff", logoPath: siFacebook.path },
+  threads: { name: "Threads", color: "#000000", logoColor: "#ffffff", wireColor: "#8ce0c0", logoPath: siThreads.path },
+  reddit: { name: "Reddit", color: "#ff4500", logoColor: "#ffffff", wireColor: "#ff9052", logoPath: siReddit.path },
+  pinterest: { name: "Pinterest", color: "#bd081c", logoColor: "#ffffff", wireColor: "#ff6f8a", logoPath: siPinterest.path },
+  twitch: { name: "Twitch", color: "#9146ff", logoColor: "#ffffff", wireColor: "#a970ff", logoPath: siTwitch.path },
+  snapchat: { name: "Snapchat", color: "#fffc00", logoColor: "#000000", wireColor: "#ffe14d", logoPath: siSnapchat.path },
+  bluesky: { name: "Bluesky", color: "#1185fe", logoColor: "#ffffff", wireColor: "#6fc6ff", logoPath: siBluesky.path },
 };
 
 export function providerName(id: string): string {

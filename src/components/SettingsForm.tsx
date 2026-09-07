@@ -5,7 +5,8 @@ import { useMemo, useState } from "react";
 import { Countdown } from "./Countdown";
 import { NotificationSetting } from "./NotificationSetting";
 import { chime, haptic } from "@/lib/effects";
-import type { Prefs, Settings, Theme } from "@/lib/settings";
+import type { Prefs, Settings } from "@/lib/settings";
+import { THEME_LABELS, THEME_NOTES, THEMES } from "@/lib/theme";
 import type { DailyWindow } from "@/lib/window";
 
 function Switch({
@@ -169,12 +170,15 @@ export function SettingsForm({
         <h2>Appearance</h2>
         <p style={{ marginBottom: 14 }}>The scroll itself stays dark. This changes everything around it.</p>
         <div className="segmented" role="group" aria-label="Theme">
-          {(["system", "dark", "light"] as Theme[]).map((t) => (
+          {THEMES.map((t) => (
             <button key={t} type="button" aria-pressed={prefs.theme === t} onClick={() => void updatePrefs({ theme: t })}>
-              {t === "system" ? "System" : t === "dark" ? "Dark" : "Light"}
+              {THEME_LABELS[t]}
             </button>
           ))}
         </div>
+        <p className="hint" style={{ marginTop: 8 }}>
+          {THEME_NOTES[prefs.theme]}
+        </p>
         <div style={{ marginTop: 8 }}>
           <Switch
             label="Reduce motion"

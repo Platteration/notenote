@@ -69,7 +69,9 @@ function Slide({
   }, [item.key, onVisible]);
 
   const name = providerName(item.provider);
-  const brand = PROVIDER_META[item.provider as ProviderId]?.color ?? "#333";
+  const meta = PROVIDER_META[item.provider as ProviderId];
+  const brand = meta?.color ?? "#333";
+  const brandWire = meta?.wireColor ?? "#ffffff";
   const open = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.preventDefault();
     openInNativeApp(item);
@@ -102,7 +104,7 @@ function Slide({
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.thumbnailUrl} alt="" loading={index < 2 ? "eager" : "lazy"} />
         ) : (
-          <div className="fallback" style={{ ["--brand" as string]: brand }}>
+          <div className="fallback" style={{ ["--brand" as string]: brand, ["--brand-wire" as string]: brandWire }}>
             ▶
           </div>
         )}
