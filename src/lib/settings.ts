@@ -6,21 +6,57 @@ export const DEFAULT_FEED_SIZE = 40;
 export const MIN_FEED_SIZE = 10;
 export const MAX_FEED_SIZE = 80;
 
+export type Theme = "system" | "dark" | "light";
+
+/**
+ * Appearance and experience preferences. These never change *what* is in the feed or how
+ * long it lasts, only how it feels — so they are safe to expand freely.
+ */
+export interface Prefs {
+  theme: Theme;
+  /** Turn off gradient animation, smooth scrolling and transitions. */
+  reduceMotion: boolean;
+  /** Light taps as clips pass, a longer pulse in the final minute (mobile only). */
+  haptics: boolean;
+  /** A soft chime when the hour opens and a lower tone when it closes. */
+  sound: boolean;
+}
+
+export const DEFAULT_PREFS: Prefs = { theme: "system", reduceMotion: false, haptics: true, sound: false };
+
 export interface Settings {
   timezone: string;
   windowStart: string;
   feedSize: number;
+  prefs: Prefs;
+}
+
+function parsePrefs(raw: string | null | undefined): Prefs {
+  if (!raw) return { ...DEFAULT_PREFS };
+  try {
+    const parsed = JSON.parse(raw) as Partial<Prefs>;
+    return {
+      theme: parsed.theme === "dark" || parsed.theme === "light" ? parsed.theme : DEFAULT_PREFS.theme,
+      reduceMotion: typeof parsed.reduceMotion === "boolean" ? parsed.reduceMotion : DEFAULT_PREFS.reduceMotion,
+      haptics: typeof parsed.haptics === "boolean" ? parsed.haptics : DEFAULT_PREFS.haptics,
+      sound: typeof parsed.sound === "boolean" ? parsed.sound : DEFAULT_PREFS.sound,
+    };
+  } catch {
+    return { ...DEFAULT_PREFS };
+  }
 }
 
 export function getSettings(userId: string): Settings {
   const row = getDb().prepare("SELECT * FROM settings WHERE user_id = ?").get(userId) as SettingsRow | undefined;
-  if (!row) return { timezone: "UTC", windowStart: DEFAULT_WINDOW_START, feedSize: DEFAULT_FEED_SIZE };
-  return { timezone: row.timezone, windowStart: row.window_start, feedSize: row.feed_size };
+  if (!row) {
+    return { timezone: "UTC", windowStart: DEFAULT_WINDOW_START, feedSize: DEFAULT_FEED_SIZE, prefs: { ...DEFAULT_PREFS } };
+  }
+  return { timezone: row.timezone, windowStart: row.window_start, feedSize: row.feed_size, prefs: parsePrefs(row.prefs) };
 }
 
-export function saveSettings(userId: string, input: Partial<Settings>): Settings {
+export function saveSettings(userId: string, input: Partial<Omit<Settings, "prefs">> & { prefs?: Partial<Prefs> }): Settings {
   const current = getSettings(userId);
-  const next: Settings = { ...current };
+  const next: Settings = { ...current, prefs: { ...current.prefs } };
   if (input.timezone !== undefined) {
     if (!isValidTimeZone(input.timezone)) throw new Error("Unknown timezone");
     next.timezone = input.timezone;
@@ -37,12 +73,22 @@ export function saveSettings(userId: string, input: Partial<Settings>): Settings
     }
     next.feedSize = n;
   }
+  if (input.prefs) {
+    const p = input.prefs;
+    if (p.theme !== undefined) {
+      if (p.theme !== "system" && p.theme !== "dark" && p.theme !== "light") throw new Error("Unknown theme");
+      next.prefs.theme = p.theme;
+    }
+    for (const key of ["reduceMotion", "haptics", "sound"] as const) {
+      if (p[key] !== undefined) next.prefs[key] = Boolean(p[key]);
+    }
+  }
   getDb()
     .prepare(
-      `INSERT INTO settings (user_id, timezone, window_start, feed_size, updated_at) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO settings (user_id, timezone, window_start, feed_size, updated_at, prefs) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET timezone = excluded.timezone, window_start = excluded.window_start,
-       feed_size = excluded.feed_size, updated_at = excluded.updated_at`,
+       feed_size = excluded.feed_size, updated_at = excluded.updated_at, prefs = excluded.prefs`,
     )
-    .run(userId, next.timezone, next.windowStart, next.feedSize, now());
+    .run(userId, next.timezone, next.windowStart, next.feedSize, now(), JSON.stringify(next.prefs));
   return next;
 }

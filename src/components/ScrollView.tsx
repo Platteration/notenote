@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Countdown } from "./Countdown";
 import { PlatformLogo } from "./PlatformLogo";
+import { chime, haptic, scrollBehavior } from "@/lib/effects";
 import type { FeedPayload } from "@/lib/feed";
 import { openInNativeApp } from "@/lib/open-native";
-import { providerName } from "@/lib/providers/meta";
-import type { MediaItem } from "@/lib/providers/types";
+import { PROVIDER_META, providerName } from "@/lib/providers/meta";
+import type { MediaItem, ProviderId } from "@/lib/providers/types";
+import type { Prefs } from "@/lib/settings";
 
 function compact(n: number | undefined): string {
   if (n == null) return "–";
@@ -38,6 +40,7 @@ function Slide({ item, index, onVisible }: { item: MediaItem; index: number; onV
   }, [item.key, onVisible]);
 
   const name = providerName(item.provider);
+  const brand = PROVIDER_META[item.provider as ProviderId]?.color ?? "#333";
   const open = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.preventDefault();
     openInNativeApp(item);
@@ -62,7 +65,9 @@ function Slide({ item, index, onVisible }: { item: MediaItem; index: number; onV
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.thumbnailUrl} alt="" loading={index < 2 ? "eager" : "lazy"} />
         ) : (
-          <div className="fallback">▶</div>
+          <div className="fallback" style={{ ["--brand" as string]: brand }}>
+            ▶
+          </div>
         )}
       </div>
       <div className="slide-shade" />
@@ -91,13 +96,14 @@ function Slide({ item, index, onVisible }: { item: MediaItem; index: number; onV
   );
 }
 
-export function ScrollView({ initial }: { initial: FeedPayload }) {
+export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Prefs }) {
   const router = useRouter();
   const { items, window: win } = initial;
   const listRef = useRef<HTMLDivElement>(null);
   const [closed, setClosed] = useState(false);
   const [current, setCurrent] = useState(0);
   const seenRef = useRef<Set<string>>(new Set(initial.seenKeys));
+  const watchedRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<Set<string>>(new Set());
 
   // Flush "seen" marks in small batches so a fast swipe doesn't spam the API.
@@ -119,12 +125,18 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
   const onVisible = useCallback(
     (key: string) => {
       const idx = items.findIndex((it) => it.key === key);
-      if (idx >= 0) setCurrent(idx);
+      if (idx >= 0) {
+        setCurrent((prev) => {
+          if (prev !== idx) haptic(prefs, 8);
+          return idx;
+        });
+      }
+      watchedRef.current.add(key);
       if (seenRef.current.has(key)) return;
       seenRef.current.add(key);
       pendingRef.current.add(key);
     },
-    [items],
+    [items, prefs],
   );
 
   // Resume where you left off within the hour.
@@ -137,7 +149,11 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const close = useCallback(() => setClosed(true), []);
+  const close = useCallback(() => {
+    setClosed(true);
+    chime(prefs, "close");
+    haptic(prefs, [40, 60, 120]);
+  }, [prefs]);
 
   // Keyboard: ↓/j/space next, ↑/k previous, enter/o open the current clip in its app.
   useEffect(() => {
@@ -147,7 +163,9 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const go = (delta: number) => {
         const next = Math.max(0, Math.min(items.length, current + delta));
-        listRef.current?.querySelector<HTMLElement>(`[data-index="${next}"], .end-slide`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+        listRef.current
+          ?.querySelector<HTMLElement>(`[data-index="${next}"], .end-slide`)
+          ?.scrollIntoView({ block: "start", behavior: scrollBehavior(prefs) });
       };
       if (e.key === "ArrowDown" || e.key === "j" || e.key === " ") {
         e.preventDefault();
@@ -162,17 +180,29 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [closed, current, items]);
+  }, [closed, current, items, prefs]);
 
-  // Time-remaining bar.
+  // Time-remaining bar, plus a single nudge as the last minute begins.
   const [pct, setPct] = useState(100);
+  const [finalMinute, setFinalMinute] = useState(false);
+  const nudgedRef = useRef(false);
   useEffect(() => {
     const total = win.closesAt - win.opensAt;
-    const tick = () => setPct(Math.max(0, Math.min(100, ((win.closesAt - Date.now()) / total) * 100)));
+    const tick = () => {
+      const remaining = win.closesAt - Date.now();
+      setPct(Math.max(0, Math.min(100, (remaining / total) * 100)));
+      if (remaining <= 60_000 && remaining > 0) {
+        setFinalMinute(true);
+        if (!nudgedRef.current) {
+          nudgedRef.current = true;
+          haptic(prefs, [30, 40, 30]);
+        }
+      }
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [win.closesAt, win.opensAt]);
+  }, [win.closesAt, win.opensAt, prefs]);
 
   const sourcesLine = useMemo(
     () =>
@@ -182,6 +212,17 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
         .join(" · "),
     [initial.sources],
   );
+
+  // What the viewer actually watched this session, for the closing recap.
+  const watchedByProvider = useMemo(() => {
+    if (!closed) return [];
+    const counts = new Map<string, number>();
+    for (const item of items) {
+      if (watchedRef.current.has(item.key)) counts.set(item.provider, (counts.get(item.provider) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [closed, items]);
+  const watchedTotal = watchedByProvider.reduce((sum, [, n]) => sum + n, 0);
 
   return (
     <div className="scroll-shell">
@@ -195,7 +236,7 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
             <Countdown target={win.closesAt} onZero={close} /> left
           </span>
         </div>
-        <div className="timebar" aria-hidden>
+        <div className={`timebar${finalMinute ? " final" : ""}`} aria-hidden>
           <div style={{ width: `${pct}%` }} />
         </div>
       </header>
@@ -235,9 +276,23 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
 
       {closed && (
         <div className="closing" role="dialog" aria-modal="true">
-          <div>
-            <h2>Time&apos;s up.</h2>
-            <p style={{ color: "rgba(255,255,255,0.7)", marginBottom: 20 }}>Your hour is over. The scroll reopens tomorrow.</p>
+          <div className="closing-inner">
+            <h2>That&apos;s your hour.</h2>
+            <p className="closing-line">
+              {watchedTotal > 0
+                ? `You watched ${watchedTotal} clip${watchedTotal === 1 ? "" : "s"}.`
+                : "Nothing watched today. That counts too."}
+            </p>
+            {watchedByProvider.length > 0 && (
+              <div className="closing-stats">
+                {watchedByProvider.map(([provider, count]) => (
+                  <span className="closing-chip" key={provider} title={providerName(provider)}>
+                    <PlatformLogo provider={provider} size={22} />
+                    {count}
+                  </span>
+                ))}
+              </div>
+            )}
             <button
               className="btn"
               type="button"
@@ -248,6 +303,7 @@ export function ScrollView({ initial }: { initial: FeedPayload }) {
             >
               See when it reopens
             </button>
+            <p className="sign-off">See you tomorrow.</p>
           </div>
         </div>
       )}

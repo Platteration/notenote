@@ -20,6 +20,8 @@ export interface SettingsRow {
   window_start: string; // "HH:MM" local wall-clock time
   feed_size: number;
   updated_at: number;
+  /** JSON blob of appearance and experience preferences; see lib/settings.ts. */
+  prefs: string;
 }
 
 export interface ConnectionRow {
@@ -100,6 +102,20 @@ CREATE TABLE IF NOT EXISTS seen_items (
   seen_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, item_key)
 );
+CREATE TABLE IF NOT EXISTS saved_items (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  item_json TEXT NOT NULL,
+  saved_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, item_key)
+);
+CREATE TABLE IF NOT EXISTS muted_creators (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  creator_handle TEXT NOT NULL,
+  muted_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, provider, creator_handle)
+);
 CREATE TABLE IF NOT EXISTS provider_cache (
   user_id TEXT NOT NULL,
   provider TEXT NOT NULL,
@@ -125,8 +141,21 @@ export function getDb(): DatabaseSync {
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  migrate(db);
   globalThis.__dailyScrollDb = db;
   return db;
+}
+
+/** Add a column to an existing table if it is missing. SQLite has no IF NOT EXISTS for columns. */
+function ensureColumn(db: DatabaseSync, table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/** Bring databases created by earlier versions up to the current schema. */
+function migrate(db: DatabaseSync): void {
+  ensureColumn(db, "settings", "prefs", "prefs TEXT NOT NULL DEFAULT '{}'");
 }
 
 export function now(): number {

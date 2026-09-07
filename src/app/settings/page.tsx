@@ -19,7 +19,7 @@ export default async function SettingsPage() {
         <h1 style={{ fontSize: 32 }}>Settings</h1>
         <p>Signed in as {user.display_name}. Choose when your hour begins.</p>
       </section>
-      <SettingsForm initial={settings} initialWindow={win} min={MIN_FEED_SIZE} max={MAX_FEED_SIZE} />
+      <SettingsForm initial={settings} initialWindow={win} min={MIN_FEED_SIZE} max={MAX_FEED_SIZE} email={user.email} />
     </main>
   );
 }

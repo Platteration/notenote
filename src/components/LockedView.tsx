@@ -5,8 +5,23 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Countdown } from "./Countdown";
 import { PlatformLogo } from "./PlatformLogo";
+import { chime } from "@/lib/effects";
 import type { LockedPayload } from "@/lib/feed";
 import { providerName } from "@/lib/providers/meta";
+import type { Prefs } from "@/lib/settings";
+
+/**
+ * The colour behind the countdown, warming from deep night to dawn as the hour nears,
+ * so the screen has a mood even when it has no content.
+ */
+function moodFor(secondsUntilOpen: number): string {
+  const hours = Math.max(0, secondsUntilOpen) / 3600;
+  const night = [80, 90, 200];
+  const dawn = [255, 150, 90];
+  const t = Math.max(0, Math.min(1, 1 - hours / 6)); // last six hours warm up
+  const mix = night.map((n, i) => Math.round(n + (dawn[i] - n) * t));
+  return `rgba(${mix[0]}, ${mix[1]}, ${mix[2]}, ${(0.14 + t * 0.16).toFixed(2)})`;
+}
 
 function formatLocal(ms: number, timezone: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -17,11 +32,14 @@ function formatLocal(ms: number, timezone: string): string {
   }).format(new Date(ms));
 }
 
-export function LockedView({ initial }: { initial: LockedPayload }) {
+export function LockedView({ initial, prefs }: { initial: LockedPayload; prefs: Prefs }) {
   const router = useRouter();
   const [state] = useState(initial);
   const win = state.window;
-  const onZero = useCallback(() => router.refresh(), [router]);
+  const onZero = useCallback(() => {
+    chime(prefs, "open");
+    router.refresh();
+  }, [router, prefs]);
 
   // Progress ring: how far through the wait we are (24h cycle).
   const [pct, setPct] = useState(0);
@@ -36,8 +54,14 @@ export function LockedView({ initial }: { initial: LockedPayload }) {
     return () => clearInterval(id);
   }, [win.opensAt]);
 
+  const [mood, setMood] = useState(() => moodFor(win.secondsUntilOpen));
+  useEffect(() => {
+    const id = setInterval(() => setMood(moodFor((win.opensAt - Date.now()) / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, [win.opensAt]);
+
   return (
-    <section className="locked">
+    <section className="locked" style={{ ["--mood" as string]: mood }}>
       <div className="ring" style={{ ["--pct" as string]: `${pct}%` }}>
         <span aria-hidden>🔒</span>
       </div>

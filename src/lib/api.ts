@@ -12,10 +12,10 @@ export function errorResponse(err: unknown, fallbackStatus = 400): NextResponse 
   return json({ error: message }, { status: fallbackStatus });
 }
 
-/** Wrap a handler that needs a signed-in user. */
+/** Wrap a handler that needs a signed-in user. Handlers may return any Response (e.g. a file download). */
 export function withUser<Ctx>(
-  handler: (req: Request, user: UserRow, ctx: Ctx) => Promise<NextResponse> | NextResponse,
-): (req: Request, ctx: Ctx) => Promise<NextResponse> {
+  handler: (req: Request, user: UserRow, ctx: Ctx) => Promise<Response> | Response,
+): (req: Request, ctx: Ctx) => Promise<Response> {
   return async (req, ctx) => {
     try {
       const user = await requireUser();
