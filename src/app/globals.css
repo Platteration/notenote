@@ -224,6 +224,9 @@ input, select { font: inherit; }
   height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; position: relative;
   display: flex; align-items: flex-end; overflow: hidden; background: #111;
 }
+.slide-muted .slide-media { opacity: 0.35; filter: grayscale(0.8); }
+.slide-muted .slide-title, .slide-muted .slide-creator { opacity: 0.7; }
+.chip-muted { background: rgba(255, 255, 255, 0.28); }
 .slide-tap { position: absolute; inset: 0; z-index: 2; cursor: pointer; }
 .slide-tap:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .slide-source { position: absolute; top: calc(64px + env(safe-area-inset-top)); right: 16px; z-index: 4; pointer-events: none; }

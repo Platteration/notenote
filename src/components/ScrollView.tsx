@@ -30,6 +30,7 @@ function Slide({
   active,
   soundOn,
   saved,
+  muted,
   onVisible,
   onSave,
   onMute,
@@ -39,6 +40,7 @@ function Slide({
   active: boolean;
   soundOn: boolean;
   saved: boolean;
+  muted: boolean;
   onVisible: (key: string) => void;
   onSave: (item: MediaItem) => void;
   onMute: (item: MediaItem) => void;
@@ -77,7 +79,7 @@ function Slide({
     openInNativeApp(item);
   };
   return (
-    <article className="slide" ref={ref} data-index={index} aria-label={item.title}>
+    <article className={`slide${muted ? " slide-muted" : ""}`} ref={ref} data-index={index} aria-label={item.title}>
       <a
         className="slide-tap"
         href={item.permalink}
@@ -101,7 +103,6 @@ function Slide({
             preload={index < 2 ? "auto" : "none"}
           />
         ) : item.thumbnailUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img src={item.thumbnailUrl} alt="" loading={index < 2 ? "eager" : "lazy"} />
         ) : (
           <div className="fallback" style={{ ["--brand" as string]: brand, ["--brand-wire" as string]: brandWire }}>
@@ -113,6 +114,7 @@ function Slide({
       <div className="slide-body">
         <div className="slide-meta">
           <span className="chip">{name}</span>
+          {muted && <span className="chip chip-muted">Muted</span>}
           {item.durationSeconds != null && <span className="chip">{item.durationSeconds}s</span>}
           <span className="chip">{ago(item.publishedAt)}</span>
         </div>
@@ -143,13 +145,14 @@ function Slide({
           <button
             className="btn btn-ghost"
             type="button"
-            title={`See less from ${item.creator}`}
+            title={muted ? `${item.creator} is muted` : `See less from ${item.creator}`}
+            aria-pressed={muted}
             onClick={(e) => {
               e.stopPropagation();
               onMute(item);
             }}
           >
-            Less like this
+            {muted ? "Muted" : "Less like this"}
           </button>
         </div>
       </div>
@@ -162,12 +165,13 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   const { items, window: win } = initial;
   const listRef = useRef<HTMLDivElement>(null);
   const [closed, setClosed] = useState(false);
+  const [watchedAtClose, setWatchedAtClose] = useState<string[]>([]);
   const [current, setCurrent] = useState(0);
   const seenRef = useRef<Set<string>>(new Set(initial.seenKeys));
   const watchedRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<Set<string>>(new Set());
   const [savedKeys, setSavedKeys] = useState<Set<string>>(() => new Set(initial.savedKeys));
-  const [mutedKeys, setMutedKeys] = useState<Set<string>>(() => new Set());
+  const [mutedCreators, setMutedCreators] = useState<Set<string>>(() => new Set());
   const [soundOn, setSoundOn] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const hasVideo = useMemo(() => items.some((i) => i.videoUrl), [items]);
@@ -206,16 +210,27 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   /** Muting hides the creator from every future feed, and dims them for the rest of today. */
   const onMute = useCallback(
     async (item: MediaItem) => {
-      setMutedKeys((prev) => new Set(prev).add(item.key));
-      haptic(prefs, 10);
-      const res = await fetch("/api/muted", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: item.provider, creatorHandle: item.creatorHandle }),
+      const creatorKey = `${item.provider}:${item.creatorHandle.toLowerCase()}`;
+      const already = mutedCreators.has(creatorKey);
+      setMutedCreators((prev) => {
+        const next = new Set(prev);
+        if (already) next.delete(creatorKey);
+        else next.add(creatorKey);
+        return next;
       });
-      flash(res.ok ? `You'll see less from ${item.creator}` : "Could not mute that creator");
+      haptic(prefs, 10);
+      const query = `provider=${encodeURIComponent(item.provider)}&creatorHandle=${encodeURIComponent(item.creatorHandle)}`;
+      const res = already
+        ? await fetch(`/api/muted?${query}`, { method: "DELETE" })
+        : await fetch("/api/muted", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider: item.provider, creatorHandle: item.creatorHandle }),
+          });
+      if (!res.ok) flash("Could not change that creator");
+      else flash(already ? `${item.creator} unmuted` : `You'll see less from ${item.creator}`);
     },
-    [prefs, flash],
+    [mutedCreators, prefs, flash],
   );
 
   // Flush "seen" marks in small batches so a fast swipe doesn't spam the API.
@@ -262,6 +277,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   }, []);
 
   const close = useCallback(() => {
+    setWatchedAtClose([...watchedRef.current]);
     setClosed(true);
     chime(prefs, "close");
     haptic(prefs, [40, 60, 120]);
@@ -325,15 +341,17 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
     [initial.sources],
   );
 
-  // What the viewer actually watched this session, for the closing recap.
+  // What the viewer actually watched this session, for the closing recap. Snapshotted
+  // when the hour closes rather than read from the ref during render.
   const watchedByProvider = useMemo(() => {
-    if (!closed) return [];
+    if (watchedAtClose.length === 0) return [];
+    const watched = new Set(watchedAtClose);
     const counts = new Map<string, number>();
     for (const item of items) {
-      if (watchedRef.current.has(item.key)) counts.set(item.provider, (counts.get(item.provider) ?? 0) + 1);
+      if (watched.has(item.key)) counts.set(item.provider, (counts.get(item.provider) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [closed, items]);
+  }, [watchedAtClose, items]);
   const watchedTotal = watchedByProvider.reduce((sum, [, n]) => sum + n, 0);
 
   return (
@@ -387,6 +405,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
             active={i === current}
             soundOn={soundOn}
             saved={savedKeys.has(item.key)}
+            muted={mutedCreators.has(`${item.provider}:${item.creatorHandle.toLowerCase()}`)}
             onVisible={onVisible}
             onSave={onSave}
             onMute={onMute}

@@ -190,9 +190,33 @@ bundle. A test enforces that.
 npm run dev         # development server
 npm run build       # production build
 npm start           # serve the build
-npm test            # vitest: window maths + curation
+npm run lint        # eslint (flat config)
 npm run typecheck   # tsc --noEmit
+npm test            # vitest
+npm run check       # lint + typecheck + test, what CI runs
 ```
+
+`scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
+hour is shut by default, two demo platforms produce a balanced short-form feed, a clip saves
+to the shelf, a clip from someone else's feed is refused, the hour locks again once it has
+passed, and sign-in throttling engages. Start the app, then `bash scripts/smoke.sh`.
+
+Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, build) and
+`smoke.yml` (boot the built app and run the smoke script).
+
+## Abuse resistance
+
+Sign-in and sign-up are throttled by a small in-memory fixed-window limiter
+(`src/lib/rate-limit.ts`). Password guessing is limited per address, and more strictly per
+account *and* address — keying the strict limit on the account alone would let anyone lock a
+real user out of their own account with a handful of wrong guesses. A much looser account-wide
+ceiling still catches a distributed attack. Credentials are never checked before the limit,
+because scrypt is deliberately expensive and that would turn sign-in into a CPU exhaustion
+vector.
+
+The limiter lives in process, which suits the single-instance SQLite storage. Behind several
+instances it becomes per-instance and the effective limit is the sum, so a shared store or a
+limit at the reverse proxy is the right answer at that point.
 
 ## Project layout
 

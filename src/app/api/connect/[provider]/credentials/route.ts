@@ -7,6 +7,7 @@
 import { json, readJson, withUser } from "@/lib/api";
 import { listConnections, saveConnection } from "@/lib/connections";
 import { getProvider } from "@/lib/providers";
+import { rateLimit } from "@/lib/rate-limit";
 
 type Ctx = { params: Promise<{ provider: string }> };
 
@@ -15,6 +16,15 @@ export const POST = withUser<Ctx>(async (req, user, ctx) => {
   const provider = getProvider(id);
   if (!provider) return json({ error: "Unknown provider" }, { status: 404 });
   if (!provider.credentialConnect) return json({ error: `${provider.name} connects through OAuth` }, { status: 400 });
+  // These calls carry a third-party app password; throttle so this cannot be used to
+  // guess credentials against the platform on someone else's behalf.
+  const limited = rateLimit(`credconnect:${user.id}:${provider.id}`, 10, 15 * 60_000);
+  if (!limited.ok) {
+    return json(
+      { error: "Too many connection attempts. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(limited.retryAfter) } },
+    );
+  }
   const body = await readJson<Record<string, unknown>>(req);
   const input: Record<string, string> = {};
   for (const f of provider.credentialConnect.fields) {

@@ -1,0 +1,55 @@
+name: Smoke
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Boot the app and walk the core flow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # node:sqlite, which the storage layer uses, needs Node 22.13+.
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+        env:
+          SESSION_SECRET: ci-smoke-secret
+
+      # Start, wait and exercise in one step: a background process started in an earlier
+      # step is not guaranteed to survive into the next one.
+      - name: Boot and walk the core flow
+        env:
+          SESSION_SECRET: ci-smoke-secret
+          DATA_DIR: /tmp/daily-scroll-smoke
+          PORT: "3000"
+        run: |
+          npm start > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/api/auth/me > /dev/null; then break; fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "server exited early:"; cat /tmp/server.log; exit 1
+            fi
+            sleep 1
+          done
+
+          bash scripts/smoke.sh
+
+      - name: Server log
+        if: failure()
+        run: cat /tmp/server.log || true

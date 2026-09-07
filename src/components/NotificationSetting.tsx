@@ -20,12 +20,15 @@ export function NotificationSetting() {
 
   const refresh = useCallback(async () => {
     if (typeof window === "undefined") return;
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    // Every state update happens after an await, so the effect never sets state
+    // synchronously and trigger a cascading render.
+    const res = await fetch("/api/push/key");
+    const { configured } = (await res.json()) as { configured: boolean };
+    if (!supported) {
       setState("unsupported");
       return;
     }
-    const res = await fetch("/api/push/key");
-    const { configured } = (await res.json()) as { configured: boolean };
     if (!configured) {
       setState("unconfigured");
       return;
@@ -40,6 +43,11 @@ export function NotificationSetting() {
   }, []);
 
   useEffect(() => {
+    // Push state can only be read from the browser: Notification.permission and the
+    // service worker registration have no server-side equivalent, so this genuinely has
+    // to happen after mount. Every update inside refresh() is behind an await, so no
+    // render cascades; the rule flags the call because it cannot see across the await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
 
