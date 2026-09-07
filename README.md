@@ -204,6 +204,17 @@ passed, and sign-in throttling engages. Start the app, then `bash scripts/smoke.
 Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, build) and
 `smoke.yml` (boot the built app and run the smoke script).
 
+Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
+which still travels on a top-level cross-site GET, so a state-changing GET would let another
+site add connections to a signed-in account.
+
+## Configuration checks
+
+`src/instrumentation.ts` runs once at server start and refuses to boot on a misconfigured
+deployment: a missing or too-short `SESSION_SECRET` in production, a relative `APP_BASE_URL`,
+or only one half of the VAPID key pair. Previously a bad `SESSION_SECRET` surfaced as a 500 on
+whichever request first touched encryption, which is a poor way to find out.
+
 ## Abuse resistance
 
 Sign-in and sign-up are throttled by a small in-memory fixed-window limiter

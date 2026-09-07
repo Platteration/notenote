@@ -96,6 +96,18 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
     setBusy(null);
   }
 
+  /** Demo connections are created with a POST, never a link — see the route for why. */
+  async function connectDemo(provider: string) {
+    setBusy(provider);
+    const res = await fetch(`/api/connect/${provider}`, { method: "POST" });
+    if (res.ok) {
+      setConnections(((await res.json()) as { connections: ConnectionSummary[] }).connections);
+      setJustConnected(provider);
+      setOpenForm(null);
+    }
+    setBusy(null);
+  }
+
   const connectedCount = connections.filter((c) => c.connected).length;
   const justConnectedRow = connections.find((c) => c.provider === justConnected);
 
@@ -155,23 +167,23 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
                 <button className="btn btn-sm" type="button" onClick={() => setOpenForm(openForm === c.provider ? null : c.provider)}>
                   Connect
                 </button>
-                <a className="link-muted" href={`/api/connect/${c.provider}/start?demo=1`}>
+                <button className="link-muted" type="button" disabled={busy === c.provider} onClick={() => connectDemo(c.provider)}>
                   or try demo
-                </a>
+                </button>
               </div>
             ) : c.credentialsConfigured ? (
               <div className="provider-actions">
                 <a className="btn btn-sm" href={`/api/connect/${c.provider}/start`}>
                   Connect
                 </a>
-                <a className="link-muted" href={`/api/connect/${c.provider}/start?demo=1`}>
+                <button className="link-muted" type="button" disabled={busy === c.provider} onClick={() => connectDemo(c.provider)}>
                   or try demo
-                </a>
+                </button>
               </div>
             ) : (
-              <a className="btn btn-sm" href={`/api/connect/${c.provider}/start`}>
+              <button className="btn btn-sm" type="button" disabled={busy === c.provider} onClick={() => connectDemo(c.provider)}>
                 Try demo
-              </a>
+              </button>
             )}
           </div>
           {!c.connected && openForm === c.provider && c.connectMode === "credentials" && (

@@ -26,13 +26,13 @@ jobs:
 
       - run: npm run build
         env:
-          SESSION_SECRET: ci-smoke-secret
+          SESSION_SECRET: ci-smoke-secret-not-a-real-deployment-key
 
       # Start, wait and exercise in one step: a background process started in an earlier
       # step is not guaranteed to survive into the next one.
       - name: Boot and walk the core flow
         env:
-          SESSION_SECRET: ci-smoke-secret
+          SESSION_SECRET: ci-smoke-secret-not-a-real-deployment-key
           DATA_DIR: /tmp/daily-scroll-smoke
           PORT: "3000"
         run: |

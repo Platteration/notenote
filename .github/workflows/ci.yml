@@ -35,4 +35,4 @@ jobs:
         run: npm run build
         env:
           # The build renders pages that read settings, so it needs a session secret.
-          SESSION_SECRET: ci-build-secret-not-used-at-runtime
+          SESSION_SECRET: ci-build-secret-not-a-real-deployment-key

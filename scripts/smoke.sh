@@ -24,7 +24,7 @@ echo "-> the hour is shut by default"
 
 echo "-> connect two platforms in demo mode"
 for p in youtube reddit; do
-  api -o /dev/null "$BASE/api/connect/$p/start?demo=1" || fail "connect $p"
+  api -o /dev/null -X POST "$BASE/api/connect/$p" || fail "connect $p"
 done
 
 echo "-> open the hour now"
