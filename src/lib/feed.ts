@@ -5,6 +5,7 @@ import { collectItems } from "./connections";
 import { curate } from "./curation";
 import { getDb, now, type DailyFeedRow } from "./db";
 import type { MediaItem } from "./providers/types";
+import { mutedSet, savedKeys, streakFor, type Streak } from "./library";
 import { getSettings } from "./settings";
 import { computeWindow, type DailyWindow } from "./window";
 
@@ -15,6 +16,7 @@ export interface FeedPayload {
   generatedAt: number;
   items: MediaItem[];
   seenKeys: string[];
+  savedKeys: string[];
   sources: Array<{ provider: string; count: number; error: string | null }>;
 }
 
@@ -32,6 +34,8 @@ export interface LockedPayload {
   connectedCount: number;
   /** What happened during the most recent hour, if the user opened it. */
   recap: HourRecap | null;
+  streak: Streak;
+  savedCount: number;
 }
 
 export function windowFor(userId: string, at: number = now()): DailyWindow {
@@ -46,7 +50,14 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
 
   if (!win.isOpen) {
     const connectedCount = (db.prepare("SELECT COUNT(*) AS c FROM connections WHERE user_id = ?").get(userId) as { c: number }).c;
-    return { status: "locked", window: win, connectedCount, recap: lastRecap(userId, at) };
+    return {
+      status: "locked",
+      window: win,
+      connectedCount,
+      recap: lastRecap(userId, at),
+      streak: streakFor(userId, win.dayKey),
+      savedCount: savedKeys(userId).length,
+    };
   }
 
   const existing = db
@@ -71,7 +82,7 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
     );
     const curated = curate(
       results.flatMap((r) => r.items),
-      { size: settings.feedSize, seed: `${userId}:${win.dayKey}`, now: at, seenKeys: seen },
+      { size: settings.feedSize, seed: `${userId}:${win.dayKey}`, now: at, seenKeys: seen, mutedCreators: mutedSet(userId) },
     );
     items = curated.items;
     sources = results.map((r) => ({ provider: r.provider, count: curated.stats.perProvider[r.provider] ?? 0, error: r.error }));
@@ -88,7 +99,16 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
       .all(userId, win.opensAt) as Array<{ item_key: string }>
   ).map((r) => r.item_key);
 
-  return { status: "open", window: win, dayKey: win.dayKey, generatedAt, items, seenKeys: seenToday, sources };
+  return {
+    status: "open",
+    window: win,
+    dayKey: win.dayKey,
+    generatedAt,
+    items,
+    seenKeys: seenToday,
+    savedKeys: savedKeys(userId),
+    sources,
+  };
 }
 
 /** Summary of the most recently closed hour (within the last two days). */

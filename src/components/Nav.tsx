@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 const LINKS = [
   { href: "/feed", label: "Scroll" },
+  { href: "/saved", label: "Saved" },
   { href: "/connect", label: "Connections" },
   { href: "/settings", label: "Settings" },
 ];

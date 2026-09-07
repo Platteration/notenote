@@ -72,6 +72,28 @@ export function LockedView({ initial, prefs }: { initial: LockedPayload; prefs: 
       <p>
         Opens {formatLocal(win.opensAt, win.timezone)}, closes {formatLocal(win.closesAt, win.timezone)} ({win.timezone}).
       </p>
+      {(state.streak.current > 0 || state.savedCount > 0) && (
+        <div className="streak-row">
+          {state.streak.current > 0 && (
+            <div className="streak">
+              <strong>{state.streak.current}</strong>
+              <span>day{state.streak.current === 1 ? "" : "s"} in a row</span>
+            </div>
+          )}
+          {state.streak.longest > state.streak.current && (
+            <div className="streak">
+              <strong>{state.streak.longest}</strong>
+              <span>longest run</span>
+            </div>
+          )}
+          {state.savedCount > 0 && (
+            <Link className="streak" href="/saved">
+              <strong>{state.savedCount}</strong>
+              <span>saved to watch</span>
+            </Link>
+          )}
+        </div>
+      )}
       {state.recap && (
         <div className="card recap" style={{ textAlign: "left", marginTop: 24 }}>
           <h2>Your last hour</h2>

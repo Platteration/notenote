@@ -13,6 +13,8 @@ export interface CurationOptions {
   now: number;
   /** Items the user has already been shown on previous days. */
   seenKeys: Set<string>;
+  /** `provider:handle` pairs the user asked to see less of. */
+  mutedCreators?: Set<string>;
   /** Ignore items older than this many days. */
   maxAgeDays?: number;
   /** Fraction of the feed one platform may occupy when several are connected. */
@@ -92,11 +94,13 @@ export function curate(all: MediaItem[], opts: CurationOptions): CurationResult 
   const maxAgeMs = (opts.maxAgeDays ?? 7) * 86_400_000;
   const rand = seededRandom(opts.seed);
 
-  // 1. Hard filters: short-form only, unseen, recent.
+  // 1. Hard filters: short-form only, unseen, recent, not from a muted creator.
+  const muted = opts.mutedCreators ?? new Set<string>();
   const fresh = all.filter(
     (it) =>
       isShortForm(it) &&
       !opts.seenKeys.has(it.key) &&
+      !muted.has(`${it.provider}:${it.creatorHandle.toLowerCase()}`) &&
       opts.now - it.publishedAt <= maxAgeMs &&
       it.publishedAt <= opts.now + 300_000,
   );
