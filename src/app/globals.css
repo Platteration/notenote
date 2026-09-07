@@ -8,7 +8,11 @@
   --bg-elev-2: #1c1c27;
   --fg: #f4f4f8;
   --fg-muted: #a0a0b4;
-  --fg-faint: #6a6a80;
+  /* Faint text still has to clear WCAG AA (4.5:1) against the elevated card surface. */
+  --fg-faint: #8e8ea0;
+  --badge-demo-ink: #ffb347;
+  --badge-live-ink: #39d98a;
+  --badge-off-ink: #a0a0b4;
   --accent: #ffb347;
   --accent-2: #ff5e7e;
   --accent-ink: #1a0a10;
@@ -31,7 +35,10 @@
     --bg-elev-2: #f2efe9;
     --fg: #1a1a22;
     --fg-muted: #5b5b6b;
-    --fg-faint: #8a8a9a;
+    --fg-faint: #6e6e7c;
+    --badge-demo-ink: #9a5200;
+    --badge-live-ink: #0b6b47;
+    --badge-off-ink: #5b5b6b;
     --accent: #e07b1a;
     --accent-2: #e0355c;
     --ok: #12855a;
@@ -48,7 +55,10 @@
   --bg-elev-2: #f2efe9;
   --fg: #1a1a22;
   --fg-muted: #5b5b6b;
-  --fg-faint: #8a8a9a;
+  --fg-faint: #6e6e7c;
+  --badge-demo-ink: #9a5200;
+  --badge-live-ink: #0b6b47;
+  --badge-off-ink: #5b5b6b;
   --accent: #e07b1a;
   --accent-2: #e0355c;
   --ok: #12855a;
@@ -184,9 +194,9 @@ input, select { font: inherit; }
 .provider-body > span { display: block; font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
 .provider-body .badge { margin-left: 6px; vertical-align: middle; }
 .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-.badge-demo { background: rgba(255, 179, 71, 0.15); color: var(--accent); }
-.badge-live { background: rgba(57, 217, 138, 0.15); color: var(--ok); }
-.badge-off { background: rgba(128, 128, 150, 0.12); color: var(--fg-faint); }
+.badge-demo { background: rgba(255, 179, 71, 0.15); color: var(--badge-demo-ink); }
+.badge-live { background: rgba(57, 217, 138, 0.15); color: var(--badge-live-ink); }
+.badge-off { background: rgba(128, 128, 150, 0.12); color: var(--badge-off-ink); }
 
 /* Locked screen */
 .locked { text-align: center; padding: 60px 0 40px; position: relative; }
@@ -319,7 +329,10 @@ input, select { font: inherit; }
   --bg-elev-2: rgba(255, 255, 255, 0.045);
   --fg: #f4f4f7;
   --fg-muted: #9d9daa;
-  --fg-faint: #676773;
+  --fg-faint: #8a8a99;
+  --badge-demo-ink: #ffd9a8;
+  --badge-live-ink: #a9e8c9;
+  --badge-off-ink: #9d9daa;
   --accent: #ffd9a8;
   --accent-2: #ffbccb;
   --accent-ink: #050507;
@@ -395,9 +408,6 @@ input, select { font: inherit; }
 :root[data-theme="wire"] .platform-logo svg path { fill: var(--brand-wire); }
 
 :root[data-theme="wire"] .badge { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
-:root[data-theme="wire"] .badge-demo { color: var(--accent); }
-:root[data-theme="wire"] .badge-live { color: var(--ok); }
-:root[data-theme="wire"] .badge-off { color: var(--fg-faint); }
 
 :root[data-theme="wire"] .stat,
 :root[data-theme="wire"] .streak,

@@ -150,6 +150,11 @@ of the wrong theme on load.
 | Light | Warm paper tones for daylight |
 | Wire | Black ground, white line work, tinted accents |
 
+Every theme is checked against WCAG AA. `test/contrast.test.ts` computes the real ratios from
+the stylesheet — flattening the translucent badge pills onto their surface the way a browser
+does — and fails if any text token drops below 4.5:1. An axe sweep across all pages in all
+three themes reports no serious violations.
+
 **Wire** is structural rather than a palette swap: every surface is described by its outline
 instead of a fill, buttons and switches become line work, and accents are pale tints used only
 where something needs telling apart. Because several brands are near-black (TikTok, X, Threads)
