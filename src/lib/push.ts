@@ -47,6 +47,9 @@ export function isValidSubscription(sub: unknown): sub is BrowserSubscription {
   );
 }
 
+/** Devices one account may register. Beyond this the oldest is dropped to make room. */
+export const MAX_SUBSCRIPTIONS_PER_USER = 20;
+
 export function saveSubscription(userId: string, sub: BrowserSubscription, at: number = now()): void {
   getDb()
     .prepare(
@@ -54,6 +57,15 @@ export function saveSubscription(userId: string, sub: BrowserSubscription, at: n
        ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`,
     )
     .run(sub.endpoint, userId, sub.keys.p256dh, sub.keys.auth, at);
+
+  // Browsers hand out a fresh endpoint fairly readily, so evict rather than refuse.
+  getDb()
+    .prepare(
+      `DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint NOT IN (
+         SELECT endpoint FROM push_subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+       )`,
+    )
+    .run(userId, userId, MAX_SUBSCRIPTIONS_PER_USER);
 }
 
 export function removeSubscription(endpoint: string): void {

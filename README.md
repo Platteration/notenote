@@ -278,6 +278,12 @@ which told an attacker exactly which addresses were registered and made the deli
 error message worthless. It is now 60ms against 57ms. A test guards the property, and fails if
 the short-circuit comes back.
 
+Three write paths are bounded, because each is loaded into memory whole when a feed is built,
+so an unbounded one is a way to make that slow and to grow shared storage. Recording a watched
+clip only accepts keys that are actually in one of your own recent feeds; muting is capped at
+500 creators; and a browser handing out fresh push endpoints evicts the oldest past 20 devices
+rather than piling up.
+
 Sign-up still reports when an address is already registered, which is a deliberate trade: there
 is no way to let someone create an account without telling them the address is taken. The rate
 limiter bounds how fast that can be probed.

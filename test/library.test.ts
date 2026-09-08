@@ -5,7 +5,9 @@ process.env.SESSION_SECRET = "test-secret-for-library-tests";
 
 const { signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
-const { listMuted, listSaved, muteCreator, mutedSet, saveItem, streakFor, unmuteCreator, unsaveItem } = await import("@/lib/library");
+const { MAX_MUTED_CREATORS, listMuted, listSaved, muteCreator, mutedSet, saveItem, streakFor, unmuteCreator, unsaveItem } =
+  await import("@/lib/library");
+const { markSeen } = await import("@/lib/feed");
 const { curate } = await import("@/lib/curation");
 const { demoItems } = await import("@/lib/providers/demo");
 
@@ -55,6 +57,15 @@ describe("muted creators", () => {
     expect(listMuted(userId)).toHaveLength(0);
   });
 
+  it("caps how many creators one account can mute", () => {
+    const fresh = getDb();
+    fresh.prepare("DELETE FROM muted_creators WHERE user_id = ?").run(userId);
+    for (let i = 0; i < MAX_MUTED_CREATORS; i++) muteCreator(userId, "youtube", `creator-${i}`, NOW);
+    expect(listMuted(userId)).toHaveLength(MAX_MUTED_CREATORS);
+    expect(() => muteCreator(userId, "youtube", "one-too-many", NOW)).toThrow(/up to 500/);
+    fresh.prepare("DELETE FROM muted_creators WHERE user_id = ?").run(userId);
+  });
+
   it("keeps muted creators out of the curated feed", () => {
     const items = demoItems("youtube", userId, NOW, 30);
     const target = items[0].creatorHandle;
@@ -66,7 +77,33 @@ describe("muted creators", () => {
   });
 });
 
+describe("recording what was watched", () => {
+  it("accepts keys from the user's own feed", () => {
+    const items = demoItems("youtube", userId, NOW, 4);
+    seedFeed("2026-09-10", items);
+    expect(markSeen(userId, items.slice(0, 2).map((i) => i.key), NOW)).toBe(2);
+  });
+
+  it("ignores keys that are not in any of the user's feeds", () => {
+    // Taking arbitrary strings would let a caller grow this table without limit, and every
+    // key is loaded into memory when a feed is built.
+    expect(markSeen(userId, ["youtube:invented", "x".repeat(500), "reddit:also-invented"], NOW)).toBe(0);
+  });
+
+  it("keeps the real keys and drops the invented ones in the same call", () => {
+    const items = demoItems("tiktok", userId, NOW, 3);
+    seedFeed("2026-09-11", items);
+    expect(markSeen(userId, [items[0].key, "tiktok:not-real"], NOW)).toBe(1);
+  });
+});
+
 describe("streak", () => {
+  // Streaks are computed from the feed rows, so start from a known set rather than
+  // depending on whatever earlier tests happened to seed.
+  beforeAll(() => {
+    getDb().prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+  });
+
   it("counts consecutive days ending today", () => {
     for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) seedFeed(day, []);
     const s = streakFor(userId, "2026-09-06");

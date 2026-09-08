@@ -13,7 +13,11 @@ export const POST = withUser(async (req, user) => {
   if (!provider || !PROVIDER_IDS.includes(provider)) return json({ error: "Unknown platform" }, { status: 400 });
   const handle = (body.creatorHandle ?? "").trim();
   if (!handle || handle.length > 200) return json({ error: "A creator handle is required" }, { status: 400 });
-  muteCreator(user.id, provider, handle);
+  try {
+    muteCreator(user.id, provider, handle);
+  } catch (err) {
+    return json({ error: err instanceof Error ? err.message : "Could not mute that creator" }, { status: 400 });
+  }
   return json({ muted: listMuted(user.id) });
 });
 

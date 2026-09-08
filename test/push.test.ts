@@ -15,6 +15,7 @@ vi.mock("web-push", () => ({
 const { signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
 const push = await import("@/lib/push");
+const { MAX_SUBSCRIPTIONS_PER_USER } = push;
 
 let userId: string;
 const sub = (n: number) => ({ endpoint: `https://push.example.com/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
@@ -38,6 +39,15 @@ describe("subscription validation", () => {
     expect(push.isValidSubscription({ endpoint: "http://push.example.com/x", keys: { p256dh: "a", auth: "b" } })).toBe(false);
     expect(push.isValidSubscription({ endpoint: "https://push.example.com/x" })).toBe(false);
     expect(push.isValidSubscription({ endpoint: `https://x.com/${"y".repeat(2100)}`, keys: { p256dh: "a", auth: "b" } })).toBe(false);
+  });
+
+  it("keeps only the most recent devices, so a browser handing out fresh endpoints cannot pile up", () => {
+    for (let i = 0; i < MAX_SUBSCRIPTIONS_PER_USER + 5; i++) push.saveSubscription(userId, sub(i), 1000 + i);
+    const rows = push.subscriptionsFor(userId);
+    expect(rows).toHaveLength(MAX_SUBSCRIPTIONS_PER_USER);
+    // The oldest five were evicted, not the newest.
+    expect(rows.some((r) => r.endpoint === sub(0).endpoint)).toBe(false);
+    expect(rows.some((r) => r.endpoint === sub(MAX_SUBSCRIPTIONS_PER_USER + 4).endpoint)).toBe(true);
   });
 
   it("stores one row per endpoint and updates keys on re-subscribe", () => {

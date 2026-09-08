@@ -137,12 +137,28 @@ export function lastRecap(userId: string, at: number = now()): HourRecap | null 
   };
 }
 
+/**
+ * Record which clips were watched.
+ *
+ * Only keys that are actually in one of the user's own recent feeds are accepted. Anything
+ * else is not a clip they could have seen, and taking arbitrary strings would let a caller
+ * grow this table without limit — which matters because every key is loaded into memory on
+ * each feed generation to filter out repeats.
+ */
 export function markSeen(userId: string, itemKeys: string[], at: number = now()): number {
   const db = getDb();
+  const known = new Set<string>();
+  const feeds = db
+    .prepare("SELECT items_json FROM daily_feeds WHERE user_id = ? ORDER BY generated_at DESC LIMIT 3")
+    .all(userId) as Array<{ items_json: string }>;
+  for (const row of feeds) {
+    for (const item of (JSON.parse(row.items_json) as { items: MediaItem[] }).items) known.add(item.key);
+  }
+
   const stmt = db.prepare("INSERT OR IGNORE INTO seen_items (user_id, item_key, seen_at) VALUES (?, ?, ?)");
   let n = 0;
   for (const key of itemKeys) {
-    if (typeof key !== "string" || key.length > 200) continue;
+    if (typeof key !== "string" || !known.has(key)) continue;
     stmt.run(userId, key, at);
     n++;
   }

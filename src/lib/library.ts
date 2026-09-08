@@ -55,7 +55,20 @@ export function savedKeys(userId: string): string[] {
   );
 }
 
+/**
+ * An upper bound on muted creators. Every one is loaded into memory when a feed is built, so
+ * an unbounded list would be a way to make that slow and to grow shared storage. Far above
+ * anything a person would reach by muting creators they actually saw.
+ */
+export const MAX_MUTED_CREATORS = 500;
+
 export function muteCreator(userId: string, provider: ProviderId, creatorHandle: string, at: number = now()): void {
+  const existing = (
+    getDb().prepare("SELECT COUNT(*) AS c FROM muted_creators WHERE user_id = ?").get(userId) as { c: number }
+  ).c;
+  if (existing >= MAX_MUTED_CREATORS) {
+    throw new Error(`You can mute up to ${MAX_MUTED_CREATORS} creators. Unmute someone first.`);
+  }
   getDb()
     .prepare(
       `INSERT INTO muted_creators (user_id, provider, creator_handle, muted_at) VALUES (?, ?, ?, ?)
