@@ -20,8 +20,8 @@ function seedFeed(dayKey: string, items: unknown[]) {
     .run(userId, dayKey, JSON.stringify({ items, sources: [] }), NOW, NOW, NOW + 3_600_000);
 }
 
-beforeAll(() => {
-  userId = signUp({ email: "library@example.com", displayName: "Lib", password: "password123" }).id;
+beforeAll(async () => {
+  userId = (await signUp({ email: "library@example.com", displayName: "Lib", password: "password123" })).id;
 });
 
 describe("saved shelf", () => {
@@ -86,8 +86,8 @@ describe("streak", () => {
     expect(s.total).toBe(4);
   });
 
-  it("is zero for a user who has never opened the scroll", () => {
-    const other = signUp({ email: "fresh@example.com", displayName: "Fresh", password: "password123" }).id;
+  it("is zero for a user who has never opened the scroll", async () => {
+    const other = (await signUp({ email: "fresh@example.com", displayName: "Fresh", password: "password123" })).id;
     expect(streakFor(other, "2026-09-06")).toEqual({ current: 0, longest: 0, total: 0 });
   });
 });

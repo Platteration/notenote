@@ -1,4 +1,16 @@
 import crypto from "node:crypto";
+import { promisify } from "node:util";
+
+/**
+ * scrypt is deliberately expensive — around 50-150ms per call. The synchronous form spends
+ * that entirely on the event loop, freezing every other request in the process, so password
+ * work always goes through the callback form, which runs on the threadpool.
+ */
+const scryptAsync = promisify(crypto.scrypt) as (
+  password: string,
+  salt: Buffer,
+  keylen: number,
+) => Promise<Buffer>;
 
 function secret(): string {
   const s = process.env.SESSION_SECRET;
@@ -41,18 +53,31 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
-export function hashPassword(password: string): string {
+export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(password, salt, 64);
+  const hash = await scryptAsync(password, salt, 64);
   return `scrypt$${salt.toString("base64url")}$${hash.toString("base64url")}`;
 }
 
-export function verifyPassword(password: string, stored: string): boolean {
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [algo, saltB, hashB] = stored.split("$");
   if (algo !== "scrypt" || !saltB || !hashB) return false;
   const expected = Buffer.from(hashB, "base64url");
-  const actual = crypto.scryptSync(password, Buffer.from(saltB, "base64url"), expected.length);
+  if (expected.length === 0) return false;
+  const actual = await scryptAsync(password, Buffer.from(saltB, "base64url"), expected.length);
   return crypto.timingSafeEqual(expected, actual);
+}
+
+/**
+ * A real hash of a value nobody knows, so a sign-in attempt for an account that does not
+ * exist can spend the same time as one that does. Without it the response is roughly ten
+ * times faster for an unknown address, which tells an attacker exactly which addresses are
+ * registered and makes the deliberately vague error message pointless.
+ */
+let decoy: Promise<string> | null = null;
+export function decoyHash(): Promise<string> {
+  decoy ??= hashPassword(crypto.randomBytes(32).toString("hex"));
+  return decoy;
 }
 
 /** PKCE helpers (RFC 7636). */

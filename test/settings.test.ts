@@ -9,8 +9,8 @@ const { THEMES } = await import("@/lib/theme");
 
 let userId: string;
 
-beforeAll(() => {
-  userId = signUp({ email: "prefs@example.com", displayName: "Prefs", password: "password123" }).id;
+beforeAll(async () => {
+  userId = (await signUp({ email: "prefs@example.com", displayName: "Prefs", password: "password123" })).id;
 });
 
 describe("preferences", () => {

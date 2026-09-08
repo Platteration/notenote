@@ -17,8 +17,8 @@ const { purgeExpired, purgeExpiredIfDue, resetPurgeSchedule } = await import("@/
 const realFetch = globalThis.fetch;
 let userId: string;
 
-beforeAll(() => {
-  userId = signUp({ email: "resilience@example.com", displayName: "R", password: "password123" }).id;
+beforeAll(async () => {
+  userId = (await signUp({ email: "resilience@example.com", displayName: "R", password: "password123" })).id;
 });
 
 afterEach(() => {

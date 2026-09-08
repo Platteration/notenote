@@ -19,8 +19,8 @@ const push = await import("@/lib/push");
 let userId: string;
 const sub = (n: number) => ({ endpoint: `https://push.example.com/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
 
-beforeAll(() => {
-  userId = signUp({ email: "push@example.com", displayName: "Push", password: "password123" }).id;
+beforeAll(async () => {
+  userId = (await signUp({ email: "push@example.com", displayName: "Push", password: "password123" })).id;
 });
 
 beforeEach(() => {

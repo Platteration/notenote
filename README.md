@@ -248,6 +248,22 @@ ceiling still catches a distributed attack. Credentials are never checked before
 because scrypt is deliberately expensive and that would turn sign-in into a CPU exhaustion
 vector.
 
+Password hashing uses scrypt through its asynchronous form. The synchronous form spends its
+whole cost — 50-150ms — on the event loop, freezing every other request in the process, so a
+handful of concurrent sign-in attempts would have stalled everyone's feed. Measured: five
+synchronous hashes blocked a 1ms timer completely (zero ticks), where the async form let it
+fire 139 times.
+
+A sign-in for an address with no account hashes against a decoy so it costs the same as a real
+one. Before that, the unknown path skipped hashing entirely and answered in 5ms against 51ms,
+which told an attacker exactly which addresses were registered and made the deliberately vague
+error message worthless. It is now 60ms against 57ms. A test guards the property, and fails if
+the short-circuit comes back.
+
+Sign-up still reports when an address is already registered, which is a deliberate trade: there
+is no way to let someone create an account without telling them the address is taken. The rate
+limiter bounds how fast that can be probed.
+
 Changing a password revokes every other session, keeping only the device making the change.
 Leaving other sessions live would defeat the point of a hurried password change. Settings also
 shows how many devices are signed in and can sign out the rest without changing the password.

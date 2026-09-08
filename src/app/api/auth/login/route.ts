@@ -38,7 +38,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const user = signIn(email, body.password ?? "");
+    const user = await signIn(email, body.password ?? "");
     // A correct password clears this device's buckets, so a burst of typos doesn't linger.
     clearRateLimit(`login:acct-ip:${email}:${ip}`);
     clearRateLimit(`login:ip:${ip}`);

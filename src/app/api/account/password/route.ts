@@ -20,7 +20,7 @@ export const POST = withUser(async (req, user) => {
   const body = await readJson<{ currentPassword?: string; newPassword?: string }>(req);
   try {
     const keep = await currentSessionToken();
-    const result = changePassword(user.id, body.currentPassword ?? "", body.newPassword ?? "", keep);
+    const result = await changePassword(user.id, body.currentPassword ?? "", body.newPassword ?? "", keep);
     return json({ changed: true, ...result });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : "Could not change the password" }, { status: 400 });

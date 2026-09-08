@@ -16,7 +16,7 @@ export async function POST(req: Request) {
       );
     }
     const body = await readJson<{ email?: string; displayName?: string; password?: string; timezone?: string }>(req);
-    const user = signUp({
+    const user = await signUp({
       email: body.email ?? "",
       displayName: body.displayName ?? "",
       password: body.password ?? "",
