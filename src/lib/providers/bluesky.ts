@@ -8,6 +8,7 @@
  * keeps posts with a native video embed. Videos on Bluesky are capped at three minutes;
  * the API doesn't report duration, so the curation treats them as short-form.
  */
+import { assertPublicHost } from "../net-guard";
 import { getJson } from "./http";
 import type { MediaItem, OAuthTokens, SocialProvider } from "./types";
 
@@ -56,9 +57,25 @@ export function serviceFromScope(scope: string | null): string {
 function normaliseService(input: string | undefined): string {
   const raw = (input ?? "").trim();
   if (!raw) return DEFAULT_SERVICE;
-  const url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+  let url: URL;
+  try {
+    url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+  } catch {
+    throw new Error("That service host isn't a valid address");
+  }
   if (url.protocol !== "https:") throw new Error("Service host must use https");
   return url.origin;
+}
+
+/**
+ * The service host is the one destination in the app a user picks, so it is checked against
+ * the network guard every time it is used rather than only when the connection is made — a
+ * name that resolved publicly at connect time can point somewhere else later.
+ */
+async function checkedService(input: string | undefined): Promise<string> {
+  const service = normaliseService(input);
+  await assertPublicHost(new URL(service).hostname);
+  return service;
 }
 
 function rkeyOf(uri: string): string {
@@ -80,7 +97,7 @@ export const bluesky: SocialProvider = {
       { name: "service", label: "Service host", type: "url", placeholder: DEFAULT_SERVICE, help: "Leave blank unless you self-host your PDS." },
     ],
     async authenticate(input) {
-      const service = normaliseService(input.service);
+      const service = await checkedService(input.service);
       const identifier = (input.identifier ?? "").trim().replace(/^@/, "");
       const password = input.password ?? "";
       if (!identifier || !password) throw new Error("Handle and app password are required");
@@ -104,7 +121,7 @@ export const bluesky: SocialProvider = {
   exchangeCode: async () => unsupported(),
 
   async refresh(_creds, refreshToken, scope?: string | null): Promise<OAuthTokens | null> {
-    const service = serviceFromScope(scope ?? null);
+    const service = await checkedService(serviceFromScope(scope ?? null));
     const session = await getJson<Session>("bluesky", `${service}/xrpc/com.atproto.server.refreshSession`, {
       method: "POST",
       headers: { Authorization: `Bearer ${refreshToken}` },
@@ -121,7 +138,7 @@ export const bluesky: SocialProvider = {
   },
 
   async fetchItems(accessToken, _providerUserId, scope?: string | null): Promise<MediaItem[]> {
-    const service = serviceFromScope(scope ?? null);
+    const service = await checkedService(serviceFromScope(scope ?? null));
     const tl = await getJson<Timeline>("bluesky", `${service}/xrpc/app.bsky.feed.getTimeline?limit=100`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });

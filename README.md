@@ -86,6 +86,24 @@ straight to the permalink.
 
 Logos are from [Simple Icons](https://simpleicons.org) (CC0).
 
+## The one destination a user chooses
+
+Every platform has a fixed API host except Bluesky, where naming your own PDS is a legitimate
+need — and also a way to point the server at whatever it can reach. `src/lib/net-guard.ts`
+resolves the host and refuses private, loopback, link-local, carrier-grade NAT, multicast and
+reserved addresses, in either IP family.
+
+The guard parses IPv6 rather than pattern-matching it, because the URL parser rewrites
+`::ffff:127.0.0.1` as `::ffff:7f00:1`; a regex looking for a dotted quad lets that straight
+through. It runs before every request to that host, not only when the connection is made, so a
+name that resolved publicly at connect time cannot be repointed later.
+
+Two limits worth stating. The check resolves the name and then fetches it, so a host answering
+publicly one moment and privately the next (DNS rebinding) is not covered; closing that needs
+the resolved address pinned into the connection itself. And `ALLOW_PRIVATE_PROVIDER_HOSTS=1`
+turns the guard off for operators deliberately running a PDS on their own network — off by
+default, because the safe choice shouldn't require reading the documentation.
+
 ## When a platform misbehaves
 
 Feed generation waits on every connected platform, so one hung API would otherwise hold the
