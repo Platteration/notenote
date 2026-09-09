@@ -11,7 +11,7 @@ export default async function SavedPage() {
   if (!user) redirect("/?next=/saved");
   return (
     <main className="shell">
-      <Nav signedIn />
+      <Nav signedIn email={user.email} />
       <section className="hero" style={{ paddingTop: 16 }}>
         <h1 style={{ fontSize: 32 }}>Saved</h1>
         <p>Clips you kept. These stay here whether or not the scroll is open.</p>

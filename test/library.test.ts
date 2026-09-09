@@ -5,9 +5,9 @@ process.env.SESSION_SECRET = "test-secret-for-library-tests";
 
 const { signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
-const { MAX_MUTED_CREATORS, listMuted, listSaved, muteCreator, mutedSet, saveItem, streakFor, unmuteCreator, unsaveItem } =
+const { MAX_MUTED_CREATORS, listMuted, listSaved, muteCreator, mutedSet, recordHourOpen, saveItem, streakFor, unmuteCreator, unsaveItem } =
   await import("@/lib/library");
-const { markSeen } = await import("@/lib/feed");
+const { getFeed, markSeen, purgeExpired } = await import("@/lib/feed");
 const { curate } = await import("@/lib/curation");
 const { demoItems } = await import("@/lib/providers/demo");
 
@@ -98,14 +98,15 @@ describe("recording what was watched", () => {
 });
 
 describe("streak", () => {
-  // Streaks are computed from the feed rows, so start from a known set rather than
+  // Showing up is recorded in its own ledger, so start from a known set rather than
   // depending on whatever earlier tests happened to seed.
   beforeAll(() => {
     getDb().prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    getDb().prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
   });
 
   it("counts consecutive days ending today", () => {
-    for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) seedFeed(day, []);
+    for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) recordHourOpen(userId, day, NOW);
     const s = streakFor(userId, "2026-09-06");
     expect(s.current).toBe(3);
     expect(s.total).toBe(3);
@@ -117,10 +118,53 @@ describe("streak", () => {
   });
 
   it("reports the longest run across gaps", () => {
-    seedFeed("2026-08-01", []);
+    recordHourOpen(userId, "2026-08-01", NOW);
     const s = streakFor(userId, "2026-09-06");
     expect(s.longest).toBe(3);
     expect(s.total).toBe(4);
+  });
+
+  it("survives the sweep that removes the feeds those days produced", () => {
+    // The regression: streaks used to be read from daily_feeds, which purgeExpired empties a
+    // day after each hour closes, so no ordinary user could ever show more than two days.
+    // The bound comes from the sweep's own threshold rather than from the streak code.
+    const db = getDb();
+    db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    const dayMs = 86_400_000;
+    for (let back = 0; back < 4; back++) {
+      const closes = NOW - back * dayMs;
+      seedFeed(new Date(closes).toISOString().slice(0, 10), []);
+      recordHourOpen(userId, new Date(closes).toISOString().slice(0, 10), closes);
+    }
+    const swept = purgeExpired(NOW + 2 * dayMs);
+    expect(swept.feeds).toBeGreaterThan(0);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM daily_feeds WHERE user_id = ?").get(userId)).toEqual({ c: 0 });
+
+    const todayKey = new Date(NOW).toISOString().slice(0, 10);
+    const s = streakFor(userId, todayKey);
+    expect(s.current).toBe(4);
+    expect(s.longest).toBeGreaterThanOrEqual(4);
+  });
+
+  it("records the open on every request inside the hour, not only the one that builds the feed", async () => {
+    // The ledger has to be written where the user turns up. The feed row is created once a
+    // day, and the prewarm cron builds items without creating one at all, so hanging the
+    // streak off that row is what made it wrong in the first place.
+    const db = getDb();
+    db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+    const inTheHour = Date.UTC(2026, 8, 6, 20, 30); // default window opens at 20:00 UTC
+
+    expect((await getFeed(userId, inTheHour)).status).toBe("open");
+    expect(db.prepare("SELECT day_key FROM hour_opens WHERE user_id = ?").all(userId)).toEqual([{ day_key: "2026-09-06" }]);
+
+    // Second visit of the same hour: the feed row already exists, so nothing is inserted there.
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+    expect((await getFeed(userId, inTheHour + 60_000)).status).toBe("open");
+    expect(db.prepare("SELECT day_key FROM hour_opens WHERE user_id = ?").all(userId)).toEqual([{ day_key: "2026-09-06" }]);
+
+    db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
   });
 
   it("is zero for a user who has never opened the scroll", async () => {

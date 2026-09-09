@@ -12,7 +12,7 @@ export const DELETE = withUser(async (req, user) => {
     return json({ error: "Type your email address to confirm deletion" }, { status: 400 });
   }
   const db = getDb();
-  for (const table of ["sessions", "settings", "connections", "daily_feeds", "seen_items", "saved_items", "muted_creators"]) {
+  for (const table of ["sessions", "settings", "connections", "daily_feeds", "hour_opens", "seen_items", "saved_items", "muted_creators"]) {
     db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
   }
   db.prepare("DELETE FROM provider_cache WHERE user_id = ?").run(user.id);

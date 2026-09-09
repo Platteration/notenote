@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS daily_feeds (
   closes_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, day_key)
 );
+CREATE TABLE IF NOT EXISTS hour_opens (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day_key TEXT NOT NULL,
+  opened_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day_key)
+);
 CREATE TABLE IF NOT EXISTS seen_items (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   item_key TEXT NOT NULL,
@@ -163,6 +169,13 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, ddl: stri
 /** Bring databases created by earlier versions up to the current schema. */
 function migrate(db: DatabaseSync): void {
   ensureColumn(db, "settings", "prefs", "prefs TEXT NOT NULL DEFAULT '{}'");
+  // Streaks used to be counted from daily_feeds, which the housekeeping sweep empties a day
+  // after each hour closes, so they could never reach three. hour_opens is the ledger now;
+  // seed it from whatever feed rows a database still has so nobody's streak restarts at zero.
+  db.exec(
+    `INSERT OR IGNORE INTO hour_opens (user_id, day_key, opened_at)
+     SELECT user_id, day_key, generated_at FROM daily_feeds`,
+  );
 }
 
 export function now(): number {

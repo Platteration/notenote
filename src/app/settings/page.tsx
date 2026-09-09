@@ -14,7 +14,7 @@ export default async function SettingsPage() {
   const win = windowFor(user.id);
   return (
     <main className="shell">
-      <Nav signedIn />
+      <Nav signedIn email={user.email} />
       <section className="hero" style={{ paddingTop: 16 }}>
         <h1 style={{ fontSize: 32 }}>Settings</h1>
         <p>Signed in as {user.display_name}. Choose when your hour begins.</p>

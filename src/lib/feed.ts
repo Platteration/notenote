@@ -5,7 +5,7 @@ import { collectItems } from "./connections";
 import { curate } from "./curation";
 import { getDb, now, type DailyFeedRow } from "./db";
 import type { MediaItem } from "./providers/types";
-import { mutedSet, savedKeys, streakFor, type Streak } from "./library";
+import { mutedSet, recordHourOpen, savedKeys, streakFor, type Streak } from "./library";
 import { getSettings } from "./settings";
 import { computeWindow, type DailyWindow } from "./window";
 
@@ -59,6 +59,10 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
       savedCount: savedKeys(userId).length,
     };
   }
+
+  // The hour is open and the user is here: that is what a streak counts, so it is recorded
+  // before anything else can fail, and on every open request rather than only the first.
+  recordHourOpen(userId, win.dayKey, at);
 
   const existing = db
     .prepare("SELECT * FROM daily_feeds WHERE user_id = ? AND day_key = ?")

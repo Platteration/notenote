@@ -113,6 +113,10 @@ input, select { font: inherit; }
   background: transparent; border: none; cursor: pointer;
 }
 .nav-links a[aria-current="page"], .nav-links a:hover, .nav-links button:hover { color: var(--fg); background: var(--bg-elev); }
+.nav-account {
+  padding: 8px 4px; color: var(--fg-muted); font-size: 13px; font-weight: 600;
+  max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .hero { padding: 40px 0 24px; }
 .hero h1 { font-family: var(--font-display); font-size: clamp(36px, 8vw, 56px); line-height: 1.02; letter-spacing: -0.02em; word-spacing: 0.06em; margin: 0 0 16px; font-weight: 700; }

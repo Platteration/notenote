@@ -1,5 +1,5 @@
 import { signIn } from "@/lib/auth";
-import { errorResponse, json, readJson } from "@/lib/api";
+import { assertSameSite, errorResponse, json, readJson } from "@/lib/api";
 import { clearRateLimit, clientKey, rateLimit } from "@/lib/rate-limit";
 import { createSession } from "@/lib/session";
 
@@ -11,6 +11,9 @@ import { createSession } from "@/lib/session";
  * *and* the address, which stops the ordinary case, and a much looser account-wide ceiling
  * catches a distributed attack without being reachable by casual abuse.
  *
+ * The address is only known when a trusted proxy supplies it (TRUSTED_PROXY_HOPS); without
+ * one the account-wide ceiling is the whole defence, which is why it exists.
+ *
  * Checking the password before the limit is not an option either: scrypt is deliberately
  * expensive, so that would turn this endpoint into a CPU exhaustion vector.
  */
@@ -20,13 +23,16 @@ const PER_ACCOUNT = { limit: 100, windowMs: 15 * 60_000 };
 
 export async function POST(req: Request) {
   try {
+    assertSameSite(req);
     const body = await readJson<{ email?: string; password?: string }>(req);
     const email = (body.email ?? "").trim().toLowerCase();
 
+    // Null when no trusted proxy names the client; the address-keyed buckets are then
+    // skipped rather than collapsed onto one shared key, which would be a lockout weapon.
     const ip = clientKey(req);
-    const checks = [rateLimit(`login:ip:${ip}`, PER_IP.limit, PER_IP.windowMs)];
+    const checks = ip ? [rateLimit(`login:ip:${ip}`, PER_IP.limit, PER_IP.windowMs)] : [];
     if (email) {
-      checks.push(rateLimit(`login:acct-ip:${email}:${ip}`, PER_ACCOUNT_IP.limit, PER_ACCOUNT_IP.windowMs));
+      if (ip) checks.push(rateLimit(`login:acct-ip:${email}:${ip}`, PER_ACCOUNT_IP.limit, PER_ACCOUNT_IP.windowMs));
       checks.push(rateLimit(`login:acct:${email}`, PER_ACCOUNT.limit, PER_ACCOUNT.windowMs));
     }
     const blocked = checks.filter((c) => !c.ok);
@@ -39,9 +45,10 @@ export async function POST(req: Request) {
     }
 
     const user = await signIn(email, body.password ?? "");
-    // A correct password clears this device's buckets, so a burst of typos doesn't linger.
-    clearRateLimit(`login:acct-ip:${email}:${ip}`);
-    clearRateLimit(`login:ip:${ip}`);
+    // A correct password clears this device's bucket for this account, so a burst of typos
+    // doesn't linger. The shared per-address bucket is deliberately left alone: clearing it
+    // would let anyone with an account of their own reset it between guesses at someone else's.
+    if (ip) clearRateLimit(`login:acct-ip:${email}:${ip}`);
     await createSession(user.id);
     return json({ id: user.id, email: user.email, displayName: user.display_name });
   } catch (err) {

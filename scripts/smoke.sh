@@ -62,13 +62,27 @@ PAST_HM="$(date -u -d '-2 hours' +%H:%M 2>/dev/null || date -u -v-2H +%H:%M)"
 api -X PUT "$BASE/api/settings" -d "{\"windowStart\":\"$PAST_HM\"}" -o /dev/null || fail "settings"
 [ "$(api -o /dev/null -w '%{http_code}' "$BASE/api/feed")" = "423" ] || fail "the scroll stayed open past its hour"
 
-echo "-> sign-in throttling is active"
+echo "-> wrong passwords are rejected, and throttled where the client can be identified"
+# Per-address throttling only runs when a trusted proxy names the client, so the forwarding
+# header below counts for something only if the server was started with TRUSTED_PROXY_HOPS=1.
+# Without one the address-keyed buckets are deliberately skipped: sharing a single bucket
+# would let a stranger lock sign-in for the whole deployment.
 codes=""
 for _ in $(seq 1 10); do
   codes="$codes$(curl -sS -o /dev/null -w '%{http_code} ' -H 'Content-Type: application/json' \
     -H 'X-Forwarded-For: 203.0.113.250' -X POST "$BASE/api/auth/login" \
     -d '{"email":"smoke@example.com","password":"wrong"}')"
 done
-case "$codes" in *429*) ;; *) fail "brute force was not throttled: $codes" ;; esac
+case "$codes" in
+  *429*) echo "   throttled after a few attempts" ;;
+  *401*) echo "   all attempts rejected; per-address throttling is off (set TRUSTED_PROXY_HOPS)" ;;
+  *) fail "wrong passwords were not rejected: $codes" ;;
+esac
+
+echo "-> a cross-site form post cannot sign anyone in"
+csrf="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: text/plain' \
+  -H 'Sec-Fetch-Site: cross-site' -H "Origin: https://evil.example" -X POST "$BASE/api/auth/login" \
+  -d '{"email":"smoke@example.com","password":"password123","x":"="}')"
+[ "$csrf" = "403" ] || fail "a cross-site sign-in was not refused: $csrf"
 
 echo "SMOKE PASS"

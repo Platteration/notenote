@@ -102,6 +102,20 @@ export function mutedSet(userId: string): Set<string> {
   return new Set(listMuted(userId).map((m) => `${m.provider}:${m.creatorHandle}`));
 }
 
+/**
+ * Record that the user was here while their hour was open.
+ *
+ * Deliberately separate from daily_feeds: that table is the frozen feed and is swept a day
+ * after the hour closes, whereas showing up is a fact worth keeping. Called on every request
+ * inside the window, not only the one that generates the feed, so a day still counts when the
+ * feed was already built.
+ */
+export function recordHourOpen(userId: string, dayKey: string, at: number = now()): void {
+  getDb()
+    .prepare("INSERT INTO hour_opens (user_id, day_key, opened_at) VALUES (?, ?, ?) ON CONFLICT(user_id, day_key) DO NOTHING")
+    .run(userId, dayKey, at);
+}
+
 export interface Streak {
   /** Consecutive days, ending today or yesterday, on which the hour was opened. */
   current: number;
@@ -115,8 +129,10 @@ export interface Streak {
  * can't be inflated by scrolling harder — only by keeping the ritual.
  */
 export function streakFor(userId: string, todayKey: string): Streak {
+  // Counted from hour_opens, not daily_feeds: the housekeeping sweep drops a feed a day
+  // after its hour closes, so a streak read from those rows could never pass two.
   const days = (
-    getDb().prepare("SELECT day_key FROM daily_feeds WHERE user_id = ? ORDER BY day_key DESC").all(userId) as Array<{
+    getDb().prepare("SELECT day_key FROM hour_opens WHERE user_id = ? ORDER BY day_key DESC").all(userId) as Array<{
       day_key: string;
     }>
   ).map((r) => r.day_key);

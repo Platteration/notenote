@@ -98,6 +98,16 @@ The guard parses IPv6 rather than pattern-matching it, because the URL parser re
 through. It runs before every request to that host, not only when the connection is made, so a
 name that resolved publicly at connect time cannot be repointed later.
 
+Checking the host that was typed is not enough on its own, because a redirect is a new
+destination. `getJson` therefore follows redirects by hand (`src/lib/providers/http.ts`)
+instead of letting fetch do it: every hop is resolved and vetted like the first, the chain is
+bounded, and an `Authorization` header is dropped when a hop leaves the origin it was issued
+for. Left to the default, one 302 from a host the user named would have reached
+`169.254.169.254` or a LAN address with no check at all — and handed back the first 200 bytes
+of whatever answered, through the error message the Connections page renders. Replies are also
+read through a counting stream and refused past 512 KB, since a destination the user chose can
+otherwise stream for the whole deadline.
+
 Two limits worth stating. The check resolves the name and then fetches it, so a host answering
 publicly one moment and privately the next (DNS rebinding) is not covered; closing that needs
 the resolved address pinned into the connection itself. And `ALLOW_PRIVATE_PROVIDER_HOSTS=1`
@@ -169,7 +179,9 @@ The hour is a hard stop, so two things exist to keep that bearable:
 
 The locked screen shows a streak of consecutive days you turned up for your hour. Because the
 hour is fixed, it rewards the ritual rather than the volume — there is no way to inflate it by
-watching more.
+watching more. Turning up is recorded in its own small ledger (`hour_opens`), one row per day,
+written on every request inside the window. It cannot be read off the feed rows: housekeeping
+drops a feed a day after its hour closes, which silently capped every streak at two.
 
 ## Appearance
 
@@ -240,7 +252,9 @@ npm run check       # lint + typecheck + test, what CI runs
 `scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
 hour is shut by default, two demo platforms produce a balanced short-form feed, a clip saves
 to the shelf, a clip from someone else's feed is refused, the hour locks again once it has
-passed, and sign-in throttling engages. Start the app, then `bash scripts/smoke.sh`.
+passed, and sign-in throttling engages. Start the app, then `bash scripts/smoke.sh`. The
+throttling step needs per-address limits, so it only asserts a 429 when the server was started
+with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
 Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, build) and
 `smoke.yml` (boot the built app and run the smoke script).
@@ -264,7 +278,30 @@ account *and* address — keying the strict limit on the account alone would let
 real user out of their own account with a handful of wrong guesses. A much looser account-wide
 ceiling still catches a distributed attack. Credentials are never checked before the limit,
 because scrypt is deliberately expensive and that would turn sign-in into a CPU exhaustion
-vector.
+vector. A successful sign-in clears that account's bucket for that address, but not the shared
+per-address one: anyone with an account of their own could otherwise reset it between guesses
+at someone else's.
+
+**Per-address limits need a reverse proxy.** A route handler cannot read the socket address, so
+the only client identity available is `X-Forwarded-For` — which is whatever the client typed
+unless something trustworthy rewrote it. `TRUSTED_PROXY_HOPS` (default 0) says how many proxies
+do. At 0 the header is ignored and the address-keyed buckets are skipped entirely, leaving the
+account-wide sign-in ceiling and a deliberately generous deployment-wide sign-up ceiling. The
+two failure modes this avoids are mirror images: trusting the header from a direct client gives
+everyone a private bucket per request, and falling back to a shared constant gives an
+unauthenticated stranger a deployment-wide sign-in lockout for twenty wrong passwords. Set
+`TRUSTED_PROXY_HOPS=1` behind a single nginx or Caddy that appends to the header, and the
+per-address limits come back.
+
+Every state-changing route refuses a request a browser made from another site
+(`assertSameSite` in `src/lib/api.ts`): `Sec-Fetch-Site` decides when it is present, and an
+`Origin` that disagrees with `APP_BASE_URL` is refused when it is not. `SameSite=Lax` does not
+cover sign-in and sign-up, because Lax governs whether a cookie is *sent* and those routes
+*set* one — so without this a cross-site `<form enctype="text/plain">`, whose body a browser
+writes as `name=value` and which is therefore valid JSON when the field name carries the
+prefix, could silently sign a visitor into an attacker's account and collect the platforms they
+then connected. `readJson` insists on `Content-Type: application/json` as a second, independent
+guard on the same hole; a form can only send three encodings and that is not one of them.
 
 Password hashing uses scrypt through its asynchronous form. The synchronous form spends its
 whole cost — 50-150ms — on the event loop, freezing every other request in the process, so a

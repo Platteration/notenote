@@ -1,3 +1,5 @@
+import net from "node:net";
+
 /**
  * A small fixed-window rate limiter held in memory.
  *
@@ -55,11 +57,41 @@ export function resetAllRateLimits(): void {
 }
 
 /**
- * Best-effort client identity. Proxy headers are attacker-controlled in general, so this
- * is a throttling aid rather than an authorisation input; it is never used to grant access.
+ * How many reverse proxies in front of this app rewrite `X-Forwarded-For`.
+ *
+ * There is no way to read the socket address from a route handler, so the only client
+ * identity available is a header — and a header is whatever the client says unless a proxy
+ * is known to be rewriting it. Default 0, meaning no proxy is trusted.
  */
-export function clientKey(req: Request): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]!.trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
+export function trustedProxyHops(env: Record<string, string | undefined> = process.env): number {
+  const n = Number(env.TRUSTED_PROXY_HOPS);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function asAddress(entry: string): string | null {
+  const bare = entry.startsWith("[") ? entry.slice(1).split("]")[0]! : entry.split(":").length === 2 ? entry.split(":")[0]! : entry;
+  return net.isIP(entry) ? entry : net.isIP(bare) ? bare : null;
+}
+
+/**
+ * The client's address, or null when this deployment cannot know it.
+ *
+ * Both halves of this matter. Trusting `X-Forwarded-For` from a direct client lets anyone
+ * pick a fresh bucket per request, which makes every per-address limit decorative. Falling
+ * back to a constant when there is no proxy is worse: every client then shares one bucket,
+ * so twenty wrong sign-ins from a stranger would lock sign-in for the whole deployment.
+ * Neither is acceptable, so an unidentifiable client gets no address at all and callers skip
+ * the address-keyed buckets rather than sharing one.
+ */
+export function clientKey(req: Request, env: Record<string, string | undefined> = process.env): string | null {
+  const hops = trustedProxyHops(env);
+  if (hops === 0) return null;
+  const chain = (req.headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  // The rightmost entry was written by the nearest proxy, so the client is `hops` from the
+  // right. A shorter chain than that means the header did not come from where it should.
+  const entry = chain.length >= hops ? chain[chain.length - hops] : undefined;
+  return entry ? asAddress(entry) : null;
 }
