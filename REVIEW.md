@@ -2,6 +2,20 @@
 
 Two independent reviewers read every first-party file in this repository; a third then re-read each security or bug claim against the code and tried to refute it. Only claims that survived that check are listed as findings; the ones that did not are recorded at the end so they are not re-raised.
 
+## Status — what has been fixed
+
+These findings are now fixed on `claude/repo-review-security-baiyud`, each with a regression test:
+
+- **SEC-1**
+- **SEC-2**
+- **SEC-3**
+- **BUG-1**
+- **MISS-1**
+
+The rest of this document is the review as written, and the fixed items are left in place so the reasoning behind each change stays with it.
+
+Repository hardening applied here as well: every GitHub Action is pinned to a commit rather than a floating tag, each workflow declares a least-privilege `permissions` block, and a Dependabot config, a licence and a security policy are in place.
+
 ## Summary
 
 The Daily Scroll is a Next.js 16.3 / React 19.2 / TypeScript app that aggregates short-form video from ten social platforms (OAuth adapters under src/lib/providers, plus a keyless Bluesky app-password path and a demo catalogue) into one deterministic, platform-balanced feed that is open for exactly sixty minutes a day; storage is node:sqlite with no native deps, and it ships Web Push, PWA install, four WCAG-checked themes, saved shelf, creator muting, streaks and account controls. It is a three-day-old but unusually well-engineered solo project: 15 commits, 7.9k lines, twelve vitest suites covering curation, window maths, net-guard, rate limiting, password timing and push, a curl smoke test, and two CI workflows; core deps (Next, React, TS) are current while eslint 9.39 (marked unsupported in the lockfile), vitest 3.2 and Node 22 lag a major. Headline findings: (1) a real defect where streaks and the hour recap read from daily_feeds, which purgeExpired deletes a day after closing, so streaks can never exceed two days once the sweep runs; (2) the outbound HTTP helper follows redirects, letting a public Bluesky host redirect the server to an internal address around the net-guard; (3) the scroll re-renders all forty slides every second because the time bar ticks in the parent; (4) every thrown error becomes a 400 with its raw message and nothing is logged. Recommended next steps: fix those four, add security headers, Dependabot, a LICENSE, pinned actions, a durable show-up ledger, an early-close action, inline playback (Bluesky HLS is already returned by the API and discarded), and a Playwright+axe suite that enforces the accessibility claim the README already makes.
