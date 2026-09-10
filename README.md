@@ -157,6 +157,24 @@ The app ships a web manifest, icons and a notifications-only service worker, so 
 Screen" installs it as a standalone, portrait-locked app that opens straight on the scroll.
 Inside the scroll, ↑/↓ (or j/k) move between clips and Enter opens the current one in its app.
 
+## Why this clip?
+
+Every clip in the feed carries a **Why this?** chip that opens an explanation of why the
+curation picked it: where it ranked on its own platform, how fresh it is, and whether a
+higher-scoring clip was passed over to vary who you hear from. The bars show the two score
+components the ordering actually used.
+
+Nothing here is reconstructed after the fact. `curate()` records a `CurationReason` for each
+clip **as it picks it** (`src/lib/curation.ts`), including its rank in that platform's queue at
+that moment, and the reasons are frozen alongside the feed. Feeds frozen before this existed
+simply have no explanation rather than a wrong one.
+
+Two rules keep the copy honest, both enforced by tests in `test/explain.test.ts`: it only
+describes numbers the scorer really used, and it never disparages a clip — one that scored
+poorly is passed over in silence rather than labelled unpopular. The phrasing lives in
+`src/lib/explain.ts`, a leaf module with a single type-only import so the scroll can render
+explanations without pulling the database layer into the browser bundle.
+
 ## Saving, muting and streaks
 
 The hour is a hard stop, so two things exist to keep that bearable:

@@ -55,19 +55,31 @@ function engagement(item: MediaItem): number {
   return (m.views ?? 0) * 0.02 + (m.likes ?? 0) * 1 + (m.comments ?? 0) * 3 + (m.shares ?? 0) * 4;
 }
 
+/** The parts that make up an item's score, kept separate so they can be explained. */
+export interface ItemScore {
+  /** 0..1, engagement relative to the strongest item on the same platform. */
+  engagement: number;
+  /** 0..1, decaying with age; roughly 1/e after three days. */
+  recency: number;
+  /** Hours since it was published, at the moment the feed was built. */
+  ageHours: number;
+  /** The blend actually used for ordering. */
+  score: number;
+}
+
 /**
  * Score each item on a 0..1-ish scale that is comparable *across* platforms:
  * engagement is normalised within its platform (log-scaled) so a platform with bigger
  * numbers cannot crowd the others out, then blended with a recency decay.
  */
-export function scoreItems(items: MediaItem[], now: number): Map<string, number> {
+export function scoreItems(items: MediaItem[], now: number): Map<string, ItemScore> {
   const byProvider = new Map<ProviderId, MediaItem[]>();
   for (const it of items) {
     const list = byProvider.get(it.provider) ?? [];
     list.push(it);
     byProvider.set(it.provider, list);
   }
-  const scores = new Map<string, number>();
+  const scores = new Map<string, ItemScore>();
   for (const [, list] of byProvider) {
     const logs = list.map((it) => Math.log1p(engagement(it)));
     const max = Math.max(...logs, 1e-9);
@@ -75,14 +87,32 @@ export function scoreItems(items: MediaItem[], now: number): Map<string, number>
       const eng = logs[i] / max; // 0..1 within platform
       const ageHours = Math.max(0, (now - it.publishedAt) / 3_600_000);
       const recency = Math.exp(-ageHours / 72); // ~1/e after three days
-      scores.set(it.key, 0.6 * eng + 0.4 * recency);
+      scores.set(it.key, { engagement: eng, recency, ageHours, score: 0.6 * eng + 0.4 * recency });
     });
   }
   return scores;
 }
 
+/**
+ * Why one clip made the feed, recorded as the round-robin picks it.
+ *
+ * The platforms this app reads from never explain themselves, so the curation here says
+ * exactly what it weighed. Everything in this record is a number the scorer actually used —
+ * none of it is reconstructed after the fact.
+ */
+export interface CurationReason extends ItemScore {
+  /** Rank among that platform's remaining clips when this one was chosen (1 = the best left). */
+  rankInPlatform: number;
+  /** Higher-scoring clips were passed over because their creator had already featured. */
+  divertedForDiversity: boolean;
+  /** How many clips from this creator were already in the feed when this one was picked. */
+  creatorAlreadyPicked: number;
+}
+
 export interface CurationResult {
   items: MediaItem[];
+  /** Keyed by item key: why each clip in `items` was chosen. */
+  reasons: Record<string, CurationReason>;
   stats: {
     considered: number;
     afterFilters: number;
@@ -131,7 +161,7 @@ export function curate(all: MediaItem[], opts: CurationOptions): CurationResult 
   for (const q of queues.values()) {
     q.sort(
       (a, b) =>
-        (scores.get(b.key)! + jitter.get(b.key)!) - (scores.get(a.key)! + jitter.get(a.key)!),
+        scores.get(b.key)!.score + jitter.get(b.key)! - (scores.get(a.key)!.score + jitter.get(a.key)!),
     );
   }
 
@@ -142,6 +172,7 @@ export function curate(all: MediaItem[], opts: CurationOptions): CurationResult 
   const perProvider: Record<string, number> = {};
   const perCreator = new Map<string, number>();
   const picked: MediaItem[] = [];
+  const reasons: Record<string, CurationReason> = {};
 
   // Start the rotation at a seeded position so the opening item varies day to day.
   let cursor = providers.length ? Math.floor(rand() * providers.length) : 0;
@@ -155,17 +186,27 @@ export function curate(all: MediaItem[], opts: CurationOptions): CurationResult 
       continue;
     }
     // Prefer the best item whose creator hasn't dominated yet; fall back to the head.
-    let idx = q.findIndex((it) => (perCreator.get(it.creatorHandle) ?? 0) < 2);
-    if (idx === -1) idx = 0;
+    const preferred = q.findIndex((it) => (perCreator.get(it.creatorHandle) ?? 0) < 2);
+    const idx = preferred === -1 ? 0 : preferred;
     const [item] = q.splice(idx, 1);
+    const alreadyPicked = perCreator.get(item.creatorHandle) ?? 0;
+
     picked.push(item);
+    reasons[item.key] = {
+      ...scores.get(item.key)!,
+      // idx is the position in what was left of the queue, so 0 means "the best still going".
+      rankInPlatform: idx + 1,
+      divertedForDiversity: idx > 0,
+      creatorAlreadyPicked: alreadyPicked,
+    };
     perProvider[provider] = (perProvider[provider] ?? 0) + 1;
-    perCreator.set(item.creatorHandle, (perCreator.get(item.creatorHandle) ?? 0) + 1);
+    perCreator.set(item.creatorHandle, alreadyPicked + 1);
     idleRounds = 0;
   }
 
   return {
     items: picked,
+    reasons,
     stats: { considered: all.length, afterFilters: deduped.length, perProvider },
   };
 }

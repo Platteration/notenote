@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Countdown } from "./Countdown";
 import { PlatformLogo } from "./PlatformLogo";
+import type { CurationReason } from "@/lib/curation";
 import { chime, haptic, scrollBehavior } from "@/lib/effects";
+import { explainReason, reasonBars } from "@/lib/explain";
 import type { FeedPayload } from "@/lib/feed";
 import { openInNativeApp } from "@/lib/open-native";
 import { PROVIDER_META, providerName } from "@/lib/providers/meta";
@@ -31,6 +33,7 @@ function Slide({
   soundOn,
   saved,
   muted,
+  reason,
   onVisible,
   onSave,
   onMute,
@@ -41,12 +44,14 @@ function Slide({
   soundOn: boolean;
   saved: boolean;
   muted: boolean;
+  reason: CurationReason | undefined;
   onVisible: (key: string) => void;
   onSave: (item: MediaItem) => void;
   onMute: (item: MediaItem) => void;
 }) {
   const ref = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [showReason, setShowReason] = useState(false);
 
   // Only the clip on screen plays, so the hour doesn't cost forty videos of bandwidth.
   useEffect(() => {
@@ -117,7 +122,37 @@ function Slide({
           {muted && <span className="chip chip-muted">Muted</span>}
           {item.durationSeconds != null && <span className="chip">{item.durationSeconds}s</span>}
           <span className="chip">{ago(item.publishedAt)}</span>
+          {reason && (
+            <button
+              type="button"
+              className="chip chip-why"
+              aria-expanded={showReason}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowReason((v) => !v);
+              }}
+            >
+              {showReason ? "Hide" : "Why this?"}
+            </button>
+          )}
         </div>
+        {reason && showReason && (
+          <div className="slide-why">
+            <ul>
+              {explainReason(reason, name).map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+            {reasonBars(reason).map((bar) => (
+              <div className="why-bar" key={bar.label}>
+                <span>{bar.label}</span>
+                <i aria-hidden>
+                  <b style={{ width: `${bar.percent}%` }} />
+                </i>
+              </div>
+            ))}
+          </div>
+        )}
         <h2 className="slide-title">{item.title}</h2>
         <p className="slide-creator">
           {item.creator} · @{item.creatorHandle}
@@ -406,6 +441,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
             soundOn={soundOn}
             saved={savedKeys.has(item.key)}
             muted={mutedCreators.has(`${item.provider}:${item.creatorHandle.toLowerCase()}`)}
+            reason={initial.reasons?.[item.key]}
             onVisible={onVisible}
             onSave={onSave}
             onMute={onMute}

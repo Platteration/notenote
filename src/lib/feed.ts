@@ -2,7 +2,7 @@
  * The daily feed: generated once per local day, frozen for the whole hour, then gone.
  */
 import { collectItems } from "./connections";
-import { curate } from "./curation";
+import { curate, type CurationReason } from "./curation";
 import { getDb, now, type DailyFeedRow } from "./db";
 import type { MediaItem } from "./providers/types";
 import { mutedSet, savedKeys, streakFor, type Streak } from "./library";
@@ -18,6 +18,11 @@ export interface FeedPayload {
   seenKeys: string[];
   savedKeys: string[];
   sources: Array<{ provider: string; count: number; error: string | null }>;
+  /**
+   * Why each clip was chosen, keyed by item key. Empty for feeds frozen before this was
+   * recorded, which the UI treats as "no explanation available" rather than an error.
+   */
+  reasons: Record<string, CurationReason>;
 }
 
 export interface HourRecap {
@@ -67,11 +72,18 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
   let items: MediaItem[];
   let generatedAt: number;
   let sources: FeedPayload["sources"];
+  let reasons: Record<string, CurationReason>;
 
   if (existing) {
-    const parsed = JSON.parse(existing.items_json) as { items: MediaItem[]; sources: FeedPayload["sources"] };
+    const parsed = JSON.parse(existing.items_json) as {
+      items: MediaItem[];
+      sources: FeedPayload["sources"];
+      reasons?: Record<string, CurationReason>;
+    };
     items = parsed.items;
     sources = parsed.sources;
+    // Feeds frozen before explanations existed simply have none.
+    reasons = parsed.reasons ?? {};
     generatedAt = existing.generated_at;
   } else {
     const results = await collectItems(userId, at);
@@ -85,12 +97,13 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
       { size: settings.feedSize, seed: `${userId}:${win.dayKey}`, now: at, seenKeys: seen, mutedCreators: mutedSet(userId) },
     );
     items = curated.items;
+    reasons = curated.reasons;
     sources = results.map((r) => ({ provider: r.provider, count: curated.stats.perProvider[r.provider] ?? 0, error: r.error }));
     generatedAt = at;
     db.prepare(
       `INSERT INTO daily_feeds (user_id, day_key, items_json, generated_at, opens_at, closes_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, day_key) DO NOTHING`,
-    ).run(userId, win.dayKey, JSON.stringify({ items, sources }), generatedAt, win.opensAt, win.closesAt);
+    ).run(userId, win.dayKey, JSON.stringify({ items, sources, reasons }), generatedAt, win.opensAt, win.closesAt);
   }
 
   const seenToday = (
@@ -108,6 +121,7 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
     seenKeys: seenToday,
     savedKeys: savedKeys(userId),
     sources,
+    reasons,
   };
 }
 
