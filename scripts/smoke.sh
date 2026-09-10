@@ -86,12 +86,22 @@ csrf="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: text/plain' \
 [ "$csrf" = "403" ] || fail "a cross-site sign-in was not refused: $csrf"
 
 echo "-> every response carries the security headers"
-# Only a running server proves this: the unit test checks the config, this checks that the
-# framework actually applies it to a real response.
+# Only a running server proves this: the unit test checks what the policy says, this checks
+# that a real response actually carries it.
 hdrs="$(curl -sSI "$BASE/")"
 case "$hdrs" in *"frame-ancestors 'none'"*) ;; *) fail "no Content-Security-Policy with frame-ancestors" ;; esac
 case "$hdrs" in *nosniff*) ;; *) fail "no X-Content-Type-Options" ;; esac
 case "$hdrs" in *[Xx]-[Pp]owered-[Bb]y*) fail "X-Powered-By is still advertised" ;; esac
+# HSTS is decided by the running server's APP_BASE_URL, not by the machine that built it, so
+# it has to agree with the address this script is actually talking to. Over plain http it must
+# be absent: a build with an https base URL frozen into it would announce a year of https-only
+# to a deployment that cannot answer on https.
+hsts=""
+case "$hdrs" in *[Ss]trict-[Tt]ransport-[Ss]ecurity*) hsts="yes" ;; esac
+case "$BASE" in
+  https://*) [ -n "$hsts" ] || fail "an https deployment sent no Strict-Transport-Security" ;;
+  *) [ -z "$hsts" ] || fail "HSTS was announced over plain http (a build-time value, or APP_BASE_URL disagrees with $BASE)" ;;
+esac
 
 echo "-> an oversized body is refused rather than buffered"
 big="$(printf '%070000d' 0 | tr '0' 'x')"

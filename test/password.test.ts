@@ -3,8 +3,9 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-password-tests";
 
-const { changePassword, revokeOtherSessions, signIn, signUp } = await import("@/lib/auth");
+const { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, changePassword, revokeOtherSessions, signIn, signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
+const { hashPassword, newId } = await import("@/lib/crypto");
 
 let userId: string;
 const EMAIL = "pw@example.com";
@@ -148,5 +149,57 @@ describe("signing out other devices", () => {
     addSession("phone");
     revokeOtherSessions(userId, "this-device");
     expect(getDb().prepare("SELECT token FROM sessions WHERE user_id = ?").all(other)).toEqual([{ token: "theirs" }]);
+  });
+});
+
+/**
+ * The ceilings on how long a credential may be belong to the paths that *write* one.
+ *
+ * signUp had no maximum until recently, so a row can hold a password longer than signUp would
+ * now accept — and there is no password reset anywhere in this app, so if sign-in or
+ * change-password refused such a credential on length the account would be shut for good.
+ * These build the row the way the old signUp would have, rather than through the current API,
+ * because the current API can no longer produce it.
+ */
+describe("an account whose credentials predate the length ceilings", () => {
+  const LONG_PASSWORD = "z".repeat(MAX_PASSWORD_LENGTH + 1);
+  const LONG_EMAIL = `${"l".repeat(MAX_EMAIL_LENGTH)}@example.com`;
+
+  async function legacyAccount(email: string, password: string): Promise<string> {
+    const id = newId();
+    getDb()
+      .prepare("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, email, "Legacy", await hashPassword(password), Date.now());
+    return id;
+  }
+
+  it("can still sign in with the password it was created with", async () => {
+    await legacyAccount("legacy-pw@example.com", LONG_PASSWORD);
+    const user = await signIn("legacy-pw@example.com", LONG_PASSWORD);
+    expect(user.email).toBe("legacy-pw@example.com");
+    // Still the wrong password for anything else.
+    await expect(signIn("legacy-pw@example.com", `${LONG_PASSWORD}x`)).rejects.toThrow(/incorrect/i);
+  });
+
+  it("can still sign in with an address longer than the ceiling", async () => {
+    expect(LONG_EMAIL.length).toBeGreaterThan(MAX_EMAIL_LENGTH);
+    await legacyAccount(LONG_EMAIL, "password123");
+    await expect(signIn(LONG_EMAIL, "password123")).resolves.toBeTruthy();
+  });
+
+  it("can change that password, which is the only way out of it", async () => {
+    const id = await legacyAccount("legacy-change@example.com", LONG_PASSWORD);
+    await changePassword(id, LONG_PASSWORD, "a-sensible-password", null);
+    await expect(signIn("legacy-change@example.com", "a-sensible-password")).resolves.toBeTruthy();
+  });
+
+  it("still refuses to create or set one that long", async () => {
+    await expect(
+      signUp({ email: "too-long@example.com", displayName: "T", password: LONG_PASSWORD }),
+    ).rejects.toThrow(new RegExp(`at most ${MAX_PASSWORD_LENGTH}`));
+    const id = await legacyAccount("legacy-new@example.com", "password123");
+    await expect(changePassword(id, "password123", LONG_PASSWORD, null)).rejects.toThrow(
+      new RegExp(`at most ${MAX_PASSWORD_LENGTH}`),
+    );
   });
 });

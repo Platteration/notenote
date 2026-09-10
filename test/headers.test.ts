@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-const { default: nextConfig, contentSecurityPolicy, securityHeaders } = await import("../next.config");
+const { default: nextConfig } = await import("../next.config");
+const { contentSecurityPolicy, securityHeaders } = await import("@/lib/security-headers");
+const proxyModule = await import("@/proxy");
 
 /** The policy as a lookup of directive -> sources, so assertions read like the header does. */
 function directives(csp: string): Record<string, string[]> {
@@ -15,15 +17,16 @@ function directives(csp: string): Record<string, string[]> {
 const headerMap = (env: Record<string, string | undefined>) =>
   Object.fromEntries(securityHeaders(env).map((h) => [h.key, h.value]));
 
-describe("security headers", () => {
-  it("applies to every path", async () => {
-    const rules = await nextConfig.headers!();
-    expect(rules).toHaveLength(1);
-    // path-to-regexp: a zero-or-more parameter, so "/" and "/a/b/c" both match.
-    expect(rules[0].source).toBe("/:path*");
-    expect(rules[0].headers.map((h) => h.key)).toContain("Content-Security-Policy");
-  });
+/** What the proxy would put on a response right now, given the process environment. */
+function served(): Headers {
+  return proxyModule.proxy().headers;
+}
 
+afterEach(() => {
+  delete process.env.APP_BASE_URL;
+});
+
+describe("security headers", () => {
   it("stops the app being framed, which is what the one-click settings buttons need", () => {
     const production = headerMap({ NODE_ENV: "production" });
     expect(directives(production["Content-Security-Policy"])["frame-ancestors"]).toEqual(["'none'"]);
@@ -70,5 +73,49 @@ describe("security headers", () => {
     );
     expect(headerMap({ NODE_ENV: "production", APP_BASE_URL: "http://localhost:3000" })["Strict-Transport-Security"]).toBeUndefined();
     expect(headerMap({ NODE_ENV: "production" })["Strict-Transport-Security"]).toBeUndefined();
+  });
+});
+
+/**
+ * Where the headers come from, which is the half a pure function cannot check.
+ *
+ * `headers()` in next.config is evaluated once by `next build` and frozen into
+ * `.next/routes-manifest.json`; the production server answers from the manifest and never
+ * calls the config again. HSTS is decided from `APP_BASE_URL`, so a deployment that builds in
+ * CI or an image and sets that variable at `npm start` — what .env.example and the README
+ * describe — would have been given the build machine's answer instead of its own.
+ */
+describe("where the headers are decided", () => {
+  it("carries the whole baseline on a real response object", () => {
+    const headers = served();
+    expect(headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(headers.get("x-content-type-options")).toBe("nosniff");
+    expect(headers.get("x-frame-options")).toBe("DENY");
+    expect(headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+    expect(headers.get("cross-origin-opener-policy")).toBe("same-origin");
+    expect(headers.get("permissions-policy")).toContain("camera=()");
+  });
+
+  it("reads APP_BASE_URL per request, so HSTS follows the running server and not the build", () => {
+    // Nothing is rebuilt or re-imported between these two: the same loaded module answers
+    // differently because the process environment changed, which is what a build-time
+    // `headers()` entry cannot do.
+    process.env.APP_BASE_URL = "https://scroll.example";
+    expect(served().get("strict-transport-security")).toMatch(/max-age=31536000/);
+
+    process.env.APP_BASE_URL = "http://localhost:3000";
+    expect(served().get("strict-transport-security")).toBeNull();
+
+    delete process.env.APP_BASE_URL;
+    expect(served().get("strict-transport-security")).toBeNull();
+  });
+
+  it("keeps the headers out of next.config, where a build would freeze them", () => {
+    expect(nextConfig.headers).toBeUndefined();
+  });
+
+  it("runs for every request: no matcher narrows the proxy", () => {
+    // The config entry it replaced was `/:path*`. A matcher here would silently uncover paths.
+    expect((proxyModule as { config?: unknown }).config).toBeUndefined();
   });
 });

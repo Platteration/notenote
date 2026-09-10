@@ -254,7 +254,9 @@ npm run check       # lint + typecheck + test, what CI runs
 `scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
 hour is shut by default, two demo platforms produce a balanced short-form feed, a clip saves
 to the shelf, a clip from someone else's feed is refused, the hour locks again once it has
-passed, and sign-in throttling engages. Start the app, then `bash scripts/smoke.sh`. The
+passed, and sign-in throttling engages. It also checks the security headers on a real response,
+including that HSTS agrees with the scheme `BASE` was reached on — so point `BASE` at the
+address the server itself is configured with. Start the app, then `bash scripts/smoke.sh`. The
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
@@ -281,13 +283,23 @@ to boot; everywhere else prints a warning on every start.
 
 Responses carry a content security policy, `X-Content-Type-Options: nosniff`, a referrer policy
 and `frame-ancestors 'none'` (with `X-Frame-Options` alongside it), and `X-Powered-By` is off
-(`next.config.ts`). Framing is the one that earns its place today: Settings has single-click
-buttons for signing other devices out and disconnecting platforms. The policy is otherwise
-defence in depth — there is no `dangerouslySetInnerHTML` or `innerHTML` anywhere in the app —
-and it is deliberately loose in two places: `'unsafe-inline'` for scripts, which is what an app
-without a nonce needs, and any https origin for images and media, because thumbnails and video
-come from whichever CDN a platform uses. HSTS is sent only when `APP_BASE_URL` says the
-deployment answers on https.
+(`poweredByHeader: false` in `next.config.ts`). Framing is the one that earns its place today:
+Settings has single-click buttons for signing other devices out and disconnecting platforms.
+The policy is otherwise defence in depth — there is no `dangerouslySetInnerHTML` or `innerHTML`
+anywhere in the app — and it is deliberately loose in two places: `'unsafe-inline'` for scripts,
+which is what an app without a nonce needs, and any https origin for images and media, because
+thumbnails and video come from whichever CDN a platform uses. HSTS is sent only when
+`APP_BASE_URL` says the deployment answers on https.
+
+The headers are written by `src/proxy.ts` as each response is answered, from the environment
+of the running server — not by `headers()` in `next.config.ts`. A config `headers()` entry is
+evaluated once by `next build` and frozen into `.next/routes-manifest.json`, which the
+production server answers from; building in CI or an image and supplying `APP_BASE_URL` at
+`npm start`, the shape this README and `.env.example` describe, would then have taken the
+build machine's answer — no HSTS for an https deployment, or a year of https-only announced
+over plain http from an image built with an https base URL. The policy itself is in
+`src/lib/security-headers.ts`, and `test/headers.test.ts` checks both what it says and that a
+change to the environment alone changes what is served.
 
 ## Abuse resistance
 
@@ -348,7 +360,11 @@ no body limit from the framework, and `Content-Length` cannot be the check becau
 under chunked transfer encoding. Sign-in also runs its per-address limit *before* it reads the
 body, so a client already over the limit cannot make the server buffer and parse anything; the
 account-keyed limits necessarily come after, since the account is in the body. Email is capped
-at 254 characters and a password at 256 — beyond that is not a passphrase, it is an upload.
+at 254 characters and a password at 256 wherever one is *written* — signing up, and the new
+password in a change — because beyond that is not a passphrase, it is an upload. Verifying a
+credential applies no ceiling: sign-up had no maximum until recently, so a longer one can
+already be stored, and refusing it at sign-in or when proving a current password would shut
+such an account for good — there is no password reset anywhere in this app.
 
 Feed generation is single-flight per user per day. The `daily_feeds` row is only written once
 every platform has answered, so several requests arriving in the seconds after an hour opens all
@@ -362,7 +378,12 @@ authenticate its data, a platform HTTP error carrying part of an upstream body �
 answered with a plain 500. A platform that fails is recorded against the feed as a short
 classified reason ("timed out", "rate limited", "needs reconnecting") rather than its message,
 because that string is frozen into the feed row, returned by `/api/feed` and re-served by the
-account export.
+account export. Connecting a platform with an app password is the one place that says more: a
+handle or password the platform refuses comes back as an HTTP 401 rather than as anything
+carrying its own words, so `credentialConnectError` names that case itself ("Bluesky did not
+accept those credentials") instead of leaving it indistinguishable from a blocked host or an
+outage. The sentence is this app's own — the service host is the user's choice, so its wording
+is never repeated back.
 
 Session cookies are random 32-byte tokens and the database stores only their sha256. Anyone who
 could read the file — a leaked backup, a world-readable `DATA_DIR` — previously held a working
@@ -404,6 +425,8 @@ src/lib/open-native.ts  Tap-to-open: app scheme first, permalink fallback
 src/lib/library.ts  Saved shelf, muted creators, show-up streaks
 src/lib/push.ts     Web Push subscriptions and the one daily notification
 src/lib/effects.ts  Haptics, chimes and motion preferences
+src/proxy.ts        Puts the security headers on every response as it is answered
+src/lib/security-headers.ts  The policy those headers carry
 public/sw.js        Service worker: notifications only, no caching
 src/lib/db.ts       SQLite schema (node:sqlite)
 test/               Unit tests

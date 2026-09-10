@@ -8,11 +8,19 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * Upper bounds on the two fields an unauthenticated caller can send.
+ * Upper bounds on the two fields a new credential is written from.
  *
  * The email one is RFC 5321's limit on a path, and without it a multi-megabyte string goes
  * into the unique index. The password one is far above any passphrase or password manager
- * output; it exists so that the work an anonymous request can ask for is bounded.
+ * output; it keeps a stored credential a sane size.
+ *
+ * They apply only where a credential is *created* — signUp, and the new password in
+ * changePassword. Checking them on the verifying side instead would lock out any account that
+ * already has a longer one: signUp had no maximum before, so such rows can exist, and there is
+ * no password reset in this app, so sign-in and change-password are the only ways back in. The
+ * work an anonymous request can ask for is bounded by MAX_REQUEST_BYTES in lib/api.ts, which
+ * is the right place for it: scrypt's cost comes from N and r, not from the length of what is
+ * hashed.
  */
 export const MAX_EMAIL_LENGTH = 254;
 export const MAX_PASSWORD_LENGTH = 256;
@@ -63,11 +71,10 @@ export async function signUp(input: {
 const WRONG_CREDENTIALS = "Email or password is incorrect";
 
 export async function signIn(email: string, password: string): Promise<UserRow> {
-  // No account can have credentials this long, so this is the same answer as a wrong
-  // password rather than a distinct one — it only avoids doing the work.
-  if (email.length > MAX_EMAIL_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
-    throw new UserFacingError(WRONG_CREDENTIALS);
-  }
+  // Deliberately no length ceiling here. Whatever is stored has to remain usable: an account
+  // made before signUp had a maximum can hold an address or a password longer than signUp
+  // would accept today, and refusing it here would be a permanent lockout, with no reset flow
+  // to recover through. MAX_REQUEST_BYTES already bounds what an anonymous caller can send.
   const row = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email.trim().toLowerCase()) as UserRow | undefined;
   // Hash against a decoy when there is no such account, so both outcomes cost the same.
   const ok = await verifyPassword(password, row ? row.password_hash : await decoyHash());
@@ -96,7 +103,9 @@ export async function changePassword(
   const db = getDb();
   const row = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
   if (!row) throw new UserFacingError("Account not found");
-  if (currentPassword.length > MAX_PASSWORD_LENGTH || !(await verifyPassword(currentPassword, row.password_hash))) {
+  // The current password is only ever compared, never stored, so the ceiling does not apply to
+  // it: an account whose password predates the ceiling has to be able to change it.
+  if (!(await verifyPassword(currentPassword, row.password_hash))) {
     throw new UserFacingError("Your current password is incorrect");
   }
   if (newPassword.length < MIN_PASSWORD_LENGTH) {

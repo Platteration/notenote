@@ -1,5 +1,6 @@
 import { decrypt, DecryptionError, encrypt, isDecryptable } from "./crypto";
 import { getDb, now, type ConnectionRow } from "./db";
+import { UserFacingError } from "./errors";
 import { BlockedHostError } from "./net-guard";
 import { enabledProviders, getProvider, liveAvailable, PROVIDERS } from "./providers";
 import { credentialsFor } from "./providers";
@@ -198,6 +199,39 @@ export function failureReason(err: unknown): string {
     return `http ${err.status}`;
   }
   return "unavailable";
+}
+
+const REFUSED_CREDENTIAL_STATUSES = new Set([400, 401, 403]);
+
+export interface CredentialConnectFailure {
+  /** What the person trying to connect is told. */
+  message: string;
+  /** Whether the detail is worth a line in the server log. */
+  log: boolean;
+}
+
+/**
+ * What to tell someone whose attempt to connect a platform with a credential failed.
+ *
+ * Two things can go wrong that the person can act on, and they arrive as different types.
+ * The app's own validation — an empty handle, a service host that is not an https address —
+ * throws UserFacingError, whose message is already written for them. A credential the platform
+ * refuses does *not*: `com.atproto.server.createSession` answers 401 to a wrong handle or app
+ * password, and getJson turns any non-2xx into a ProviderHttpError before anything looks at
+ * the body, so this is the only place that can say "the platform rejected what you typed".
+ * Without it a wrong app password read the same as a blocked host or an upstream outage.
+ *
+ * The sentence is fixed rather than quoted from the reply: the service host is chosen by the
+ * user, so its wording — and its 200 bytes of upstream body — is attacker-controlled text.
+ * Anything else gets the generic sentence, and everything the app did not itself raise is
+ * logged, so the operator keeps the detail the client is not given.
+ */
+export function credentialConnectError(err: unknown, providerName: string): CredentialConnectFailure {
+  if (err instanceof UserFacingError) return { message: err.message, log: false };
+  if (err instanceof ProviderHttpError && REFUSED_CREDENTIAL_STATUSES.has(err.status)) {
+    return { message: `${providerName} did not accept those credentials.`, log: true };
+  }
+  return { message: `Could not connect ${providerName}. Check the details and try again.`, log: true };
 }
 
 /** Fetch (or reuse cached) items from every connected platform for a user. */

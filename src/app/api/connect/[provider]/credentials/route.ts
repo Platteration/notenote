@@ -5,8 +5,7 @@
  * only the resulting session tokens are, encrypted.
  */
 import { json, readJson, withUser } from "@/lib/api";
-import { UserFacingError } from "@/lib/errors";
-import { listConnections, saveConnection } from "@/lib/connections";
+import { credentialConnectError, listConnections, saveConnection } from "@/lib/connections";
 import { getProvider } from "@/lib/providers";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -38,11 +37,16 @@ export const POST = withUser<Ctx>(async (req, user, ctx) => {
     saveConnection(user.id, provider.id, tokens, false);
     return json({ connections: listConnections(user.id) });
   } catch (err) {
-    // The platform's own explanation ("invalid identifier or password") helps and is safe to
-    // repeat. Anything else — a blocked host, an HTTP error carrying part of an upstream body
-    // — describes the server's network rather than the credentials, so it stays in the log.
-    if (err instanceof UserFacingError) return json({ error: err.message }, { status: 400 });
-    console.error(`Credential connect failed for ${provider.id}:`, err);
-    return json({ error: `Could not connect ${provider.name}. Check the details and try again.` }, { status: 400 });
+    // Two failures are the person's to fix and are named as such: what this app validated
+    // (an empty handle, a service host that is not https), and the platform refusing the
+    // credentials — which arrives as a ProviderHttpError 401, not as anything carrying the
+    // platform's own words, since getJson rejects a non-2xx before its body is looked at.
+    // Nothing from the reply is quoted: the service host is the user's own choice, so its
+    // wording is not this server's to repeat. Everything else — a blocked host, an upstream
+    // outage — describes the server's network rather than the credentials, so it is answered
+    // generically and left in the log.
+    const answer = credentialConnectError(err, provider.name);
+    if (answer.log) console.error(`Credential connect failed for ${provider.id}:`, err);
+    return json({ error: answer.message }, { status: 400 });
   }
 });
