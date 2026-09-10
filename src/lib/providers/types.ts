@@ -119,6 +119,75 @@ export interface SocialProvider {
   fetchItems(accessToken: string, providerUserId: string, scope?: string | null): Promise<MediaItem[]>;
 }
 
+/**
+ * Bounds on an item built out of a platform's reply.
+ *
+ * Nothing in the pipeline used to limit these. A hostile host — the Bluesky PDS is chosen by
+ * the user — could put a title as long as the reply itself into `MediaItem`, and those items
+ * are persisted twice: the whole fetch into `provider_cache` for six hours, and the curated
+ * subset into `daily_feeds` for a day. Both are parsed back into memory on later requests
+ * (marking a clip seen reads the three most recent feeds, saving one reads seven, the account
+ * export reads all of them), so an unbounded item is paid for over and over.
+ *
+ * These are generous next to anything a real platform sends: titles run to a line or two, and
+ * a signed CDN thumbnail URL is a few hundred characters.
+ */
+export const MAX_ITEM_TEXT = 200;
+export const MAX_ITEM_URL = 2000;
+export const MAX_ITEM_KEY = 200;
+/** A platform that answers with more items than this has stopped being a timeline. */
+export const MAX_ITEMS_PER_PROVIDER = 200;
+
+function boundedText(value: unknown, limit: number): string {
+  return typeof value === "string" ? value.slice(0, limit) : "";
+}
+
+function boundedUrl(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_ITEM_URL ? value : null;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Normalise what a platform sent into something the app is willing to store.
+ *
+ * Applied in one place — `collectItems` — so it covers every provider rather than whichever
+ * one was last audited. An item with no usable key or permalink is dropped: there is nothing
+ * to identify it by and nothing to open.
+ */
+export function sanitiseItems(items: MediaItem[]): MediaItem[] {
+  const out: MediaItem[] = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || typeof item !== "object") continue;
+    const key = boundedText(item.key, MAX_ITEM_KEY);
+    const permalink = boundedUrl(item.permalink);
+    if (!key || !permalink) continue;
+    out.push({
+      key,
+      provider: item.provider,
+      externalId: boundedText(item.externalId, MAX_ITEM_KEY),
+      title: boundedText(item.title, MAX_ITEM_TEXT),
+      creator: boundedText(item.creator, MAX_ITEM_TEXT),
+      creatorHandle: boundedText(item.creatorHandle, MAX_ITEM_TEXT),
+      permalink,
+      thumbnailUrl: boundedUrl(item.thumbnailUrl),
+      videoUrl: boundedUrl(item.videoUrl),
+      durationSeconds: finiteNumber(item.durationSeconds) ?? null,
+      publishedAt: finiteNumber(item.publishedAt) ?? 0,
+      metrics: {
+        views: finiteNumber(item.metrics?.views),
+        likes: finiteNumber(item.metrics?.likes),
+        comments: finiteNumber(item.metrics?.comments),
+        shares: finiteNumber(item.metrics?.shares),
+      },
+    });
+    if (out.length === MAX_ITEMS_PER_PROVIDER) break;
+  }
+  return out;
+}
+
 export const SHORT_FORM_MAX_SECONDS = 90;
 
 export function isShortForm(item: MediaItem): boolean {

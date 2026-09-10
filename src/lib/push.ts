@@ -7,6 +7,7 @@
  */
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { getDb, now } from "./db";
+import { assertPublicHost } from "./net-guard";
 
 export interface StoredSubscription {
   endpoint: string;
@@ -47,16 +48,49 @@ export function isValidSubscription(sub: unknown): sub is BrowserSubscription {
   );
 }
 
+/**
+ * A push endpoint is a URL the client chooses and the server POSTs to every day, which makes
+ * it the second destination in the app a user picks — the Bluesky PDS being the first. Without
+ * this an account holder can register `https://10.0.0.5:8443/admin`, have the server knock on
+ * it once a day, and read the outcome back from the subscription list.
+ */
+export async function isReachableEndpoint(endpoint: string): Promise<boolean> {
+  let host: string;
+  try {
+    host = new URL(endpoint).hostname;
+  } catch {
+    return false;
+  }
+  try {
+    await assertPublicHost(host);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Devices one account may register. Beyond this the oldest is dropped to make room. */
 export const MAX_SUBSCRIPTIONS_PER_USER = 20;
 
-export function saveSubscription(userId: string, sub: BrowserSubscription, at: number = now()): void {
-  getDb()
+/**
+ * Store a device's subscription, or report that it belongs to someone else.
+ *
+ * The endpoint is the primary key across all users, and this upsert used to reassign
+ * `user_id`, so an account that learned another user's endpoint — a shared browser profile, a
+ * copied service-worker registration, a support log — could take the row over: the victim
+ * silently stopped receiving their own notification and could no longer even delete it, while
+ * the attacker's "your hour is open" arrived on their device. A genuine re-registration always
+ * carries the same user, so refusing the cross-user case breaks nothing legitimate.
+ */
+export function saveSubscription(userId: string, sub: BrowserSubscription, at: number = now()): boolean {
+  const result = getDb()
     .prepare(
       `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`,
+       ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
+       WHERE push_subscriptions.user_id = excluded.user_id`,
     )
     .run(sub.endpoint, userId, sub.keys.p256dh, sub.keys.auth, at);
+  if (Number(result.changes) === 0) return false;
 
   // Browsers hand out a fresh endpoint fairly readily, so evict rather than refuse.
   getDb()
@@ -66,6 +100,7 @@ export function saveSubscription(userId: string, sub: BrowserSubscription, at: n
        )`,
     )
     .run(userId, userId, MAX_SUBSCRIPTIONS_PER_USER);
+  return true;
 }
 
 export function removeSubscription(endpoint: string): void {

@@ -5,6 +5,7 @@
  * only the resulting session tokens are, encrypted.
  */
 import { json, readJson, withUser } from "@/lib/api";
+import { UserFacingError } from "@/lib/errors";
 import { listConnections, saveConnection } from "@/lib/connections";
 import { getProvider } from "@/lib/providers";
 import { rateLimit } from "@/lib/rate-limit";
@@ -37,7 +38,11 @@ export const POST = withUser<Ctx>(async (req, user, ctx) => {
     saveConnection(user.id, provider.id, tokens, false);
     return json({ connections: listConnections(user.id) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Could not connect";
-    return json({ error: message }, { status: 400 });
+    // The platform's own explanation ("invalid identifier or password") helps and is safe to
+    // repeat. Anything else — a blocked host, an HTTP error carrying part of an upstream body
+    // — describes the server's network rather than the credentials, so it stays in the log.
+    if (err instanceof UserFacingError) return json({ error: err.message }, { status: 400 });
+    console.error(`Credential connect failed for ${provider.id}:`, err);
+    return json({ error: `Could not connect ${provider.name}. Check the details and try again.` }, { status: 400 });
   }
 });

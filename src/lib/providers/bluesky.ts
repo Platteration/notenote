@@ -8,6 +8,7 @@
  * keeps posts with a native video embed. Videos on Bluesky are capped at three minutes;
  * the API doesn't report duration, so the curation treats them as short-form.
  */
+import { UserFacingError } from "../errors";
 import { assertPublicHost } from "../net-guard";
 import { getJson } from "./http";
 import type { MediaItem, OAuthTokens, SocialProvider } from "./types";
@@ -61,9 +62,9 @@ function normaliseService(input: string | undefined): string {
   try {
     url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
   } catch {
-    throw new Error("That service host isn't a valid address");
+    throw new UserFacingError("That service host isn't a valid address");
   }
-  if (url.protocol !== "https:") throw new Error("Service host must use https");
+  if (url.protocol !== "https:") throw new UserFacingError("Service host must use https");
   return url.origin;
 }
 
@@ -100,13 +101,13 @@ export const bluesky: SocialProvider = {
       const service = await checkedService(input.service);
       const identifier = (input.identifier ?? "").trim().replace(/^@/, "");
       const password = input.password ?? "";
-      if (!identifier || !password) throw new Error("Handle and app password are required");
+      if (!identifier || !password) throw new UserFacingError("Handle and app password are required");
       const session = await getJson<Session>("bluesky", `${service}/xrpc/com.atproto.server.createSession`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier, password }),
       });
-      if (session.error) throw new Error(`Bluesky: ${session.message ?? session.error}`);
+      if (session.error) throw new UserFacingError(`Bluesky: ${session.message ?? session.error}`);
       return {
         accessToken: session.accessJwt,
         refreshToken: session.refreshJwt,

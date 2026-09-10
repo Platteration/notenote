@@ -149,14 +149,22 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
               <strong>
                 {c.name}{" "}
                 {c.connected ? (
-                  <span className={`badge ${c.demo ? "badge-demo" : "badge-live"}`}>{c.demo ? "demo" : "live"}</span>
+                  <span className={`badge ${c.needsReconnect ? "badge-off" : c.demo ? "badge-demo" : "badge-live"}`}>
+                    {c.needsReconnect ? "reconnect" : c.demo ? "demo" : "live"}
+                  </span>
                 ) : (
                   <span className="badge badge-off">
                     {c.demoOnly ? "no public api" : c.credentialsConfigured ? "ready" : "demo available"}
                   </span>
                 )}
               </strong>
-              <span>{c.connected ? c.displayName : c.capability}</span>
+              <span>
+              {c.needsReconnect
+                ? "This connection's stored tokens can't be read any more. Disconnect and connect again."
+                : c.connected
+                  ? c.displayName
+                  : c.capability}
+            </span>
             </div>
             {c.connected ? (
               <button className="btn btn-danger btn-sm" disabled={busy === c.provider} onClick={() => disconnect(c.provider)} type="button">

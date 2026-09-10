@@ -2,9 +2,9 @@
  * POST /api/account/password — change the password, proving ownership with the current one.
  */
 import { changePassword } from "@/lib/auth";
-import { json, readJson, withUser } from "@/lib/api";
+import { errorResponse, json, readJson, withUser } from "@/lib/api";
 import { rateLimit } from "@/lib/rate-limit";
-import { currentSessionToken } from "@/lib/session";
+import { currentSessionKey } from "@/lib/session";
 
 /**
  * Guessing the current password here is the same attack as guessing it at sign-in.
@@ -25,10 +25,10 @@ export const POST = withUser(async (req, user) => {
   }
   const body = await readJson<{ currentPassword?: string; newPassword?: string }>(req);
   try {
-    const keep = await currentSessionToken();
+    const keep = await currentSessionKey();
     const result = await changePassword(user.id, body.currentPassword ?? "", body.newPassword ?? "", keep);
     return json({ changed: true, ...result });
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : "Could not change the password" }, { status: 400 });
+    return errorResponse(err);
   }
 });

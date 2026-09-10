@@ -78,23 +78,10 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
     sources = parsed.sources;
     generatedAt = existing.generated_at;
   } else {
-    const results = await collectItems(userId, at);
-    const seen = new Set(
-      (db.prepare("SELECT item_key FROM seen_items WHERE user_id = ?").all(userId) as Array<{ item_key: string }>).map(
-        (r) => r.item_key,
-      ),
-    );
-    const curated = curate(
-      results.flatMap((r) => r.items),
-      { size: settings.feedSize, seed: `${userId}:${win.dayKey}`, now: at, seenKeys: seen, mutedCreators: mutedSet(userId) },
-    );
-    items = curated.items;
-    sources = results.map((r) => ({ provider: r.provider, count: curated.stats.perProvider[r.provider] ?? 0, error: r.error }));
-    generatedAt = at;
-    db.prepare(
-      `INSERT INTO daily_feeds (user_id, day_key, items_json, generated_at, opens_at, closes_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, day_key) DO NOTHING`,
-    ).run(userId, win.dayKey, JSON.stringify({ items, sources }), generatedAt, win.opensAt, win.closesAt);
+    const generated = await generateOnce(userId, win, settings.feedSize, at);
+    items = generated.items;
+    sources = generated.sources;
+    generatedAt = generated.generatedAt;
   }
 
   const seenToday = (
@@ -113,6 +100,64 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
     savedKeys: savedKeys(userId),
     sources,
   };
+}
+
+interface GeneratedFeed {
+  items: MediaItem[];
+  sources: FeedPayload["sources"];
+  generatedAt: number;
+}
+
+/**
+ * Generation in flight, keyed on the user and the day.
+ *
+ * The daily_feeds row is only written once every connected platform has answered, so before
+ * this, N requests arriving in the seconds after an hour opened all saw no row and all ran the
+ * whole fan-out: one outbound sequence per platform, each with its own 20-second budget, on
+ * the operator's credentials. The provider cache did not help either, being written at the end
+ * of the same call. The first caller now does the work and the rest wait on it, which suits
+ * the single-process SQLite design the rate limiter already assumes.
+ */
+const generating = new Map<string, Promise<GeneratedFeed>>();
+
+/** Only for tests. */
+export function feedGenerationsInFlight(): number {
+  return generating.size;
+}
+
+async function generateOnce(userId: string, win: DailyWindow, feedSize: number, at: number): Promise<GeneratedFeed> {
+  const key = `${userId}:${win.dayKey}`;
+  const running = generating.get(key);
+  if (running) return running;
+
+  const work = generate(userId, win, feedSize, at);
+  generating.set(key, work);
+  try {
+    return await work;
+  } finally {
+    generating.delete(key);
+  }
+}
+
+async function generate(userId: string, win: DailyWindow, feedSize: number, at: number): Promise<GeneratedFeed> {
+  const db = getDb();
+  const results = await collectItems(userId, at);
+  const seen = new Set(
+    (db.prepare("SELECT item_key FROM seen_items WHERE user_id = ?").all(userId) as Array<{ item_key: string }>).map(
+      (r) => r.item_key,
+    ),
+  );
+  const curated = curate(
+    results.flatMap((r) => r.items),
+    { size: feedSize, seed: `${userId}:${win.dayKey}`, now: at, seenKeys: seen, mutedCreators: mutedSet(userId) },
+  );
+  const items = curated.items;
+  const sources = results.map((r) => ({ provider: r.provider, count: curated.stats.perProvider[r.provider] ?? 0, error: r.error }));
+  db.prepare(
+    `INSERT INTO daily_feeds (user_id, day_key, items_json, generated_at, opens_at, closes_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, day_key) DO NOTHING`,
+  ).run(userId, win.dayKey, JSON.stringify({ items, sources }), at, win.opensAt, win.closesAt);
+  return { items, sources, generatedAt: at };
 }
 
 /** Summary of the most recently closed hour (within the last two days). */

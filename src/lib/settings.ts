@@ -1,4 +1,5 @@
 import { getDb, now, type SettingsRow } from "./db";
+import { UserFacingError } from "./errors";
 import { isTheme, THEMES, type Theme } from "./theme";
 import { isValidTimeZone, parseWindowStart } from "./window";
 
@@ -60,25 +61,25 @@ export function saveSettings(userId: string, input: Partial<Omit<Settings, "pref
   const current = getSettings(userId);
   const next: Settings = { ...current, prefs: { ...current.prefs } };
   if (input.timezone !== undefined) {
-    if (!isValidTimeZone(input.timezone)) throw new Error("Unknown timezone");
+    if (!isValidTimeZone(input.timezone)) throw new UserFacingError("Unknown timezone");
     next.timezone = input.timezone;
   }
   if (input.windowStart !== undefined) {
     const parsed = parseWindowStart(input.windowStart);
-    if (!parsed) throw new Error("Window start must be HH:MM");
+    if (!parsed) throw new UserFacingError("Window start must be HH:MM");
     next.windowStart = `${String(parsed.hour).padStart(2, "0")}:${String(parsed.minute).padStart(2, "0")}`;
   }
   if (input.feedSize !== undefined) {
     const n = Math.round(Number(input.feedSize));
     if (!Number.isFinite(n) || n < MIN_FEED_SIZE || n > MAX_FEED_SIZE) {
-      throw new Error(`Feed size must be between ${MIN_FEED_SIZE} and ${MAX_FEED_SIZE}`);
+      throw new UserFacingError(`Feed size must be between ${MIN_FEED_SIZE} and ${MAX_FEED_SIZE}`);
     }
     next.feedSize = n;
   }
   if (input.prefs) {
     const p = input.prefs;
     if (p.theme !== undefined) {
-      if (!isTheme(p.theme)) throw new Error("Unknown theme");
+      if (!isTheme(p.theme)) throw new UserFacingError("Unknown theme");
       next.prefs.theme = p.theme;
     }
     for (const key of ["reduceMotion", "haptics", "sound"] as const) {

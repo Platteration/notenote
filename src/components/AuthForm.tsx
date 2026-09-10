@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { safeNextPath } from "@/lib/safe-path";
 
 export function AuthForm() {
   const router = useRouter();
@@ -29,8 +30,7 @@ export function AuthForm() {
       setError(body.error ?? "Something went wrong");
       return;
     }
-    const next = params.get("next");
-    router.push(next && next.startsWith("/") ? next : mode === "signup" ? "/connect" : "/feed");
+    router.push(safeNextPath(params.get("next"), mode === "signup" ? "/connect" : "/feed"));
     router.refresh();
   }
 

@@ -4,11 +4,11 @@
  */
 import { revokeOtherSessions } from "@/lib/auth";
 import { json, withUser } from "@/lib/api";
-import { currentSessionToken, sessionCountFor } from "@/lib/session";
+import { currentSessionKey, sessionCountFor } from "@/lib/session";
 
 export const GET = withUser(async (_req, user) => json({ sessions: sessionCountFor(user.id) }));
 
 export const DELETE = withUser(async (_req, user) => {
-  const keep = await currentSessionToken();
+  const keep = await currentSessionKey();
   return json({ revoked: revokeOtherSessions(user.id, keep), sessions: sessionCountFor(user.id) });
 });

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
+  -- The sha256 of the cookie value, never the cookie itself. See lib/session.ts.
   token TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at INTEGER NOT NULL,
@@ -146,7 +147,10 @@ declare global {
 export function getDb(): DatabaseSync {
   if (globalThis.__dailyScrollDb) return globalThis.__dailyScrollDb;
   const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
-  fs.mkdirSync(dataDir, { recursive: true });
+  // Owner-only: the file underneath holds encrypted platform tokens and every session row,
+  // and on a shared host the default permissions make that world-readable. Applies when the
+  // directory is created; an existing one is left as the operator set it.
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const file =
     process.env.DATABASE_FILE === ":memory:"
       ? ":memory:"

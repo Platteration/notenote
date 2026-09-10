@@ -8,21 +8,48 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  const production = process.env.NODE_ENV === "production";
   const problems: string[] = [];
+  const warnings: string[] = [];
   const secret = process.env.SESSION_SECRET ?? "";
 
-  if (process.env.NODE_ENV === "production") {
-    if (!secret) problems.push("SESSION_SECRET is not set. Sessions cannot be signed and provider tokens cannot be encrypted.");
-    else if (secret.length < 16) problems.push(`SESSION_SECRET is ${secret.length} characters; at least 16 are required.`);
+  /**
+   * The SESSION_SECRET check runs everywhere, not only in production.
+   *
+   * Outside production the app falls back to a secret that is committed to this repository, so
+   * sha256 of it is a publicly known AES-256-GCM key — and it is the key protecting the access
+   * and refresh tokens of every connected platform. That is fine for a local run with demo
+   * connections and not fine at all for a dev server exposed through a tunnel to register OAuth
+   * redirect URIs, which is a normal step and holds real tokens. Production refuses to boot;
+   * everywhere else says so on every start.
+   */
+  if (!secret || secret.length < 16) {
+    const how = secret ? `is only ${secret.length} characters (at least 16 are required)` : "is not set";
+    if (production) {
+      problems.push(`SESSION_SECRET ${how}. Provider tokens cannot be encrypted.`);
+    } else {
+      warnings.push(
+        `SESSION_SECRET ${how}, so provider tokens are being encrypted with the development key from this repository. ` +
+          "That key is public: do not connect a real account to this server, and do not expose it.",
+      );
+    }
+  }
 
-    const base = process.env.APP_BASE_URL;
-    if (base && !/^https?:\/\//.test(base)) problems.push(`APP_BASE_URL must be an absolute URL, got "${base}".`);
+  const base = process.env.APP_BASE_URL;
+  if (base && !/^https?:\/\//.test(base)) {
+    const message = `APP_BASE_URL must be an absolute URL, got "${base}".`;
+    if (production) problems.push(message);
+    else warnings.push(message);
   }
 
   const publicKey = process.env.VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
   if (Boolean(publicKey) !== Boolean(privateKey)) {
     problems.push("VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together; push is disabled until both are present.");
+  }
+
+  if (warnings.length > 0) {
+    console.warn(["The Daily Scroll is running with an insecure configuration:", ...warnings.map((w) => `  - ${w}`)].join("\n"));
   }
 
   if (problems.length > 0) {

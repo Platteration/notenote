@@ -30,7 +30,9 @@ connect  ->  fetch  ->  curate  ->  freeze for the day  ->  open for 60 min  -> 
 ```
 
 1. **Connect.** Each platform is an OAuth provider under `src/lib/providers/`. Tokens are
-   encrypted (AES-256-GCM) before they touch the database and refreshed when they expire.
+   encrypted (AES-256-GCM) before they touch the database and refreshed when they expire. Each
+   ciphertext names the key that wrote it, so `SESSION_SECRET` can be rotated without stranding
+   them — see `PREVIOUS_SESSION_SECRETS` in `.env.example`.
 2. **Fetch.** Every connected platform returns normalised `MediaItem`s. Results are cached for
    six hours so the platforms are not hammered; stale data is served if a platform errors.
 3. **Curate** (`src/lib/curation.ts`). Short-form only (≤ 90 s), unseen, published in the last
@@ -270,6 +272,23 @@ deployment: a missing or too-short `SESSION_SECRET` in production, a relative `A
 or only one half of the VAPID key pair. Previously a bad `SESSION_SECRET` surfaced as a 500 on
 whichever request first touched encryption, which is a poor way to find out.
 
+The `SESSION_SECRET` check itself runs everywhere, not only in production, because outside it
+the app falls back to a development key that is committed to this repository — a publicly known
+AES key protecting the access and refresh tokens of every connected platform. `next start` sets
+`NODE_ENV=production`, so the case that matters is a dev server exposed through a tunnel to
+register OAuth redirect URIs, which is a normal step and holds real tokens. Production refuses
+to boot; everywhere else prints a warning on every start.
+
+Responses carry a content security policy, `X-Content-Type-Options: nosniff`, a referrer policy
+and `frame-ancestors 'none'` (with `X-Frame-Options` alongside it), and `X-Powered-By` is off
+(`next.config.ts`). Framing is the one that earns its place today: Settings has single-click
+buttons for signing other devices out and disconnecting platforms. The policy is otherwise
+defence in depth — there is no `dangerouslySetInnerHTML` or `innerHTML` anywhere in the app —
+and it is deliberately loose in two places: `'unsafe-inline'` for scripts, which is what an app
+without a nonce needs, and any https origin for images and media, because thumbnails and video
+come from whichever CDN a platform uses. HSTS is sent only when `APP_BASE_URL` says the
+deployment answers on https.
+
 ## Abuse resistance
 
 Sign-in and sign-up are throttled by a small in-memory fixed-window limiter
@@ -315,11 +334,49 @@ which told an attacker exactly which addresses were registered and made the deli
 error message worthless. It is now 60ms against 57ms. A test guards the property, and fails if
 the short-circuit comes back.
 
-Three write paths are bounded, because each is loaded into memory whole when a feed is built,
-so an unbounded one is a way to make that slow and to grow shared storage. Recording a watched
-clip only accepts keys that are actually in one of your own recent feeds; muting is capped at
-500 creators; and a browser handing out fresh push endpoints evicts the oldest past 20 devices
-rather than piling up.
+Four write paths are bounded, because each is loaded into memory whole when a feed is built, so
+an unbounded one is a way to make that slow and to grow shared storage. Recording a watched clip
+only accepts keys that are actually in one of your own recent feeds; muting is capped at 500
+creators; a browser handing out fresh push endpoints evicts the oldest past 20 devices rather
+than piling up; and what a platform sends is normalised on the way in (`sanitiseItems`), so a
+title, creator or URL cannot be as long as the reply that carried it. That last one is applied
+in `collectItems`, once, so it covers all eleven providers rather than whichever was last
+audited — and it matters most for Bluesky, where the host answering is one the user picked.
+
+Request bodies are read through a counting stream and refused past 64 KB. A route handler gets
+no body limit from the framework, and `Content-Length` cannot be the check because it is absent
+under chunked transfer encoding. Sign-in also runs its per-address limit *before* it reads the
+body, so a client already over the limit cannot make the server buffer and parse anything; the
+account-keyed limits necessarily come after, since the account is in the body. Email is capped
+at 254 characters and a password at 256 — beyond that is not a passphrase, it is an upload.
+
+Feed generation is single-flight per user per day. The `daily_feeds` row is only written once
+every platform has answered, so several requests arriving in the seconds after an hour opens all
+used to see no row and all run the whole fan-out: one outbound sequence per connected platform,
+each with its own 20-second budget, on the operator's credentials. The first caller now does the
+work and the rest wait on it.
+
+Errors say as little as they can. Only a `UserFacingError` (`src/lib/errors.ts`) has its message
+returned; everything else — a SQLite constraint, a JSON parse failure, a decrypt that could not
+authenticate its data, a platform HTTP error carrying part of an upstream body — is logged and
+answered with a plain 500. A platform that fails is recorded against the feed as a short
+classified reason ("timed out", "rate limited", "needs reconnecting") rather than its message,
+because that string is frozen into the feed row, returned by `/api/feed` and re-served by the
+account export.
+
+Session cookies are random 32-byte tokens and the database stores only their sha256. Anyone who
+could read the file — a leaked backup, a world-readable `DATA_DIR` — previously held a working
+cookie for every account for up to thirty days, while the passwords in the same file were behind
+scrypt. `DATA_DIR` is now also created owner-only. Upgrading past this signs everyone out once,
+since the old rows hold a value that no longer matches anything.
+
+A push endpoint is a URL the client chooses and the server POSTs to every day, which makes it
+the second destination in the app a user picks; it goes through the same network guard as a
+Bluesky PDS, so `https://10.0.0.5:8443/admin` cannot be registered and knocked on daily. And a
+subscription belongs to the account that registered it: the endpoint is the primary key across
+all users, and the upsert used to reassign it, so anyone who learned someone else's endpoint
+could take the row over — the victim silently stopped receiving their own notification while the
+attacker's arrived on their device.
 
 Sign-up still reports when an address is already registered, which is a deliberate trade: there
 is no way to let someone create an account without telling them the address is taken. The rate

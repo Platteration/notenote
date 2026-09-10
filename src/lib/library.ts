@@ -6,6 +6,7 @@
  * creator is the other direction: an explicit "less like this" that curation respects.
  */
 import { getDb, now, type DailyFeedRow } from "./db";
+import { UserFacingError } from "./errors";
 import type { MediaItem, ProviderId } from "./providers/types";
 
 export interface SavedItem {
@@ -28,7 +29,7 @@ function findInFeeds(userId: string, itemKey: string): MediaItem | null {
 
 export function saveItem(userId: string, itemKey: string, at: number = now()): SavedItem {
   const item = findInFeeds(userId, itemKey);
-  if (!item) throw new Error("That clip isn't in any of your recent feeds");
+  if (!item) throw new UserFacingError("That clip isn't in any of your recent feeds");
   getDb()
     .prepare(
       `INSERT INTO saved_items (user_id, item_key, item_json, saved_at) VALUES (?, ?, ?, ?)
@@ -67,7 +68,7 @@ export function muteCreator(userId: string, provider: ProviderId, creatorHandle:
     getDb().prepare("SELECT COUNT(*) AS c FROM muted_creators WHERE user_id = ?").get(userId) as { c: number }
   ).c;
   if (existing >= MAX_MUTED_CREATORS) {
-    throw new Error(`You can mute up to ${MAX_MUTED_CREATORS} creators. Unmute someone first.`);
+    throw new UserFacingError(`You can mute up to ${MAX_MUTED_CREATORS} creators. Unmute someone first.`);
   }
   getDb()
     .prepare(

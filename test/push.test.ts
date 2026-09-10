@@ -59,6 +59,52 @@ describe("subscription validation", () => {
   });
 });
 
+describe("one device belongs to one account", () => {
+  it("refuses to move a subscription to another account", async () => {
+    const attacker = (await signUp({ email: "attacker@example.com", displayName: "A", password: "password123" })).id;
+    expect(push.saveSubscription(userId, sub(1))).toBe(true);
+
+    // Learning someone else's endpoint — a shared browser profile, a copied service-worker
+    // registration, a support log — used to be enough to take the row over: the victim
+    // silently stopped receiving their own notification and the attacker's arrived instead.
+    expect(push.saveSubscription(attacker, sub(1))).toBe(false);
+    expect(push.subscriptionsFor(userId).map((s) => s.endpoint)).toEqual([sub(1).endpoint]);
+    expect(push.subscriptionsFor(attacker)).toHaveLength(0);
+
+    sendNotification.mockResolvedValue({});
+    expect((await push.notifyHourOpen(attacker, "2026-09-06", 60)).sent).toBe(0);
+    expect((await push.notifyHourOpen(userId, "2026-09-06", 60)).sent).toBe(1);
+  });
+
+  it("still lets the same account re-register the same device", () => {
+    expect(push.saveSubscription(userId, sub(1))).toBe(true);
+    expect(push.saveSubscription(userId, { ...sub(1), keys: { p256dh: "rotated", auth: "rotated" } })).toBe(true);
+    expect(push.subscriptionsFor(userId)[0].p256dh).toBe("rotated");
+  });
+});
+
+describe("where the server is willing to send", () => {
+  it("refuses an endpoint on the network the server can reach and the user cannot", async () => {
+    // The daily cron POSTs to whatever was stored, so this is the second destination in the
+    // app a user picks — the Bluesky PDS being the first — and it gets the same guard.
+    for (const endpoint of [
+      "https://localhost/push",
+      "https://127.0.0.1/push",
+      "https://[::1]/push",
+      "https://169.254.169.254/latest/meta-data/",
+      "https://10.0.0.5:8443/admin",
+      "not a url at all",
+    ]) {
+      await expect(push.isReachableEndpoint(endpoint)).resolves.toBe(false);
+    }
+  });
+
+  it("accepts a publicly routable one", async () => {
+    // An address literal, so the check is exercised without a DNS lookup in a test run.
+    await expect(push.isReachableEndpoint("https://93.184.216.34/wp/abc")).resolves.toBe(true);
+  });
+});
+
 describe("daily delivery", () => {
   it("sends once per device and not again the same day", async () => {
     push.saveSubscription(userId, sub(1));

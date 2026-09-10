@@ -1,9 +1,11 @@
-import { decrypt, encrypt } from "./crypto";
+import { decrypt, DecryptionError, encrypt, isDecryptable } from "./crypto";
 import { getDb, now, type ConnectionRow } from "./db";
+import { BlockedHostError } from "./net-guard";
 import { enabledProviders, getProvider, liveAvailable, PROVIDERS } from "./providers";
 import { credentialsFor } from "./providers";
 import { demoItems } from "./providers/demo";
-import type { MediaItem, OAuthTokens, ProviderId } from "./providers/types";
+import { ProviderHttpError, ProviderResponseTooLargeError, ProviderTimeoutError } from "./providers/http";
+import { sanitiseItems, type MediaItem, type OAuthTokens, type ProviderId } from "./providers/types";
 
 /** How long fetched provider items are reused before hitting the platform again. */
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -18,6 +20,13 @@ function providerBudgetMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 20_000;
 }
 
+export class ProviderBudgetError extends Error {
+  constructor(provider: string, ms: number) {
+    super(`${provider} took longer than ${ms}ms and was skipped`);
+    this.name = "ProviderBudgetError";
+  }
+}
+
 /**
  * Resolve with whatever the platform returns, or reject once the budget is spent. The
  * underlying requests are left to die on their own timeouts; we simply stop waiting, so
@@ -26,7 +35,7 @@ function providerBudgetMs(): number {
 async function withBudget<T>(provider: string, work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`${provider} took longer than ${ms}ms and was skipped`)), ms);
+    timer = setTimeout(() => reject(new ProviderBudgetError(provider, ms)), ms);
   });
   try {
     return await Promise.race([work, budget]);
@@ -46,6 +55,13 @@ export interface ConnectionSummary {
   credentialsConfigured: boolean;
   /** Platform has no third-party content API; only the demo catalogue exists. */
   demoOnly: boolean;
+  /**
+   * The stored tokens cannot be decrypted, so this connection cannot fetch anything until it
+   * is made again. It happens when SESSION_SECRET is rotated without the old value being kept
+   * in PREVIOUS_SESSION_SECRETS — the connection would otherwise keep reporting itself live
+   * while the feed silently came back empty.
+   */
+  needsReconnect: boolean;
   /** How a live connection is made. */
   connectMode: "oauth" | "credentials" | "none";
   /** Form definition for credential-based platforms. */
@@ -68,6 +84,7 @@ export function listConnections(userId: string): ConnectionSummary[] {
       capability: p.capability,
       connected: Boolean(row),
       demo: row ? row.demo === 1 : false,
+      needsReconnect: row ? row.demo !== 1 && !isDecryptable(row.access_token) : false,
       credentialsConfigured: liveAvailable(p),
       demoOnly: Boolean(p.demoOnly),
       connectMode: p.demoOnly ? "none" : p.credentialConnect ? "credentials" : "oauth",
@@ -155,8 +172,32 @@ async function usableAccessToken(row: ConnectionRow): Promise<string> {
 export interface ProviderFetchResult {
   provider: ProviderId;
   items: MediaItem[];
+  /** A short, classified reason. See failureReason. */
   error: string | null;
   fromCache: boolean;
+}
+
+/**
+ * Why a platform produced nothing, in a few words.
+ *
+ * The raw message used to be stored here, and it does not stay local: it is frozen into
+ * `daily_feeds.items_json`, returned by /api/feed and re-served by the account export. That
+ * meant a platform's HTTP error — which carries up to 200 bytes of an upstream body — and
+ * decrypt's "Unsupported state or unable to authenticate data" were handed to the client and
+ * kept for a day. The detail belongs in the server log; the client needs to know which
+ * platform failed and roughly why.
+ */
+export function failureReason(err: unknown): string {
+  if (err instanceof ProviderBudgetError || err instanceof ProviderTimeoutError) return "timed out";
+  if (err instanceof DecryptionError) return "needs reconnecting";
+  if (err instanceof BlockedHostError) return "host refused";
+  if (err instanceof ProviderResponseTooLargeError) return "sent too much data";
+  if (err instanceof ProviderHttpError) {
+    if (err.status === 401 || err.status === 403) return "authorisation expired";
+    if (err.status === 429) return "rate limited";
+    return `http ${err.status}`;
+  }
+  return "unavailable";
 }
 
 /** Fetch (or reuse cached) items from every connected platform for a user. */
@@ -185,18 +226,22 @@ export async function collectItems(userId: string, at: number = now()): Promise<
           })(),
           providerBudgetMs(),
         );
+        // Whatever the platform sent is bounded here, before it is stored and before anything
+        // downstream parses it back. One place, so it covers every provider.
+        const bounded = sanitiseItems(items);
         db.prepare(
           `INSERT INTO provider_cache (user_id, provider, items_json, fetched_at) VALUES (?, ?, ?, ?)
            ON CONFLICT(user_id, provider) DO UPDATE SET items_json = excluded.items_json, fetched_at = excluded.fetched_at`,
-        ).run(userId, providerId, JSON.stringify(items), at);
-        return { provider: providerId, items, error: null, fromCache: false };
+        ).run(userId, providerId, JSON.stringify(bounded), at);
+        return { provider: providerId, items: bounded, error: null, fromCache: false };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Fetching items from ${providerId} failed:`, err);
+        const reason = failureReason(err);
         // Serve stale data rather than nothing when the platform is unhappy.
         if (cached) {
-          return { provider: providerId, items: JSON.parse(cached.items_json) as MediaItem[], error: message, fromCache: true };
+          return { provider: providerId, items: JSON.parse(cached.items_json) as MediaItem[], error: reason, fromCache: true };
         }
-        return { provider: providerId, items: [], error: message, fromCache: false };
+        return { provider: providerId, items: [], error: reason, fromCache: false };
       }
     }),
   );

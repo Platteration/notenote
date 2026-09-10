@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { UserFacingError } from "./errors";
 import { requireUser, UnauthorizedError } from "./session";
 import type { UserRow } from "./db";
 
@@ -61,11 +62,21 @@ export function assertSameSite(req: Request): void {
   if (origin !== expected) throw new CrossSiteError();
 }
 
+/**
+ * Answer an error without describing the inside of the server.
+ *
+ * Only a `UserFacingError` carries a message a client should see. Anything else — a SQLite
+ * constraint, a JSON.parse failure, a decrypt that could not authenticate its data, a
+ * platform's HTTP error with part of the upstream body in it — is logged here and answered
+ * with a 500 and nothing else. `fallbackStatus` still applies to user-facing errors that do
+ * not name a status of their own, which is how a bad sign-in stays a 401.
+ */
 export function errorResponse(err: unknown, fallbackStatus = 400): NextResponse {
   if (err instanceof UnauthorizedError) return json({ error: "Not signed in" }, { status: 401 });
   if (err instanceof CrossSiteError) return json({ error: err.message }, { status: 403 });
-  const message = err instanceof Error ? err.message : "Something went wrong";
-  return json({ error: message }, { status: fallbackStatus });
+  if (err instanceof UserFacingError) return json({ error: err.message }, { status: err.status ?? fallbackStatus });
+  console.error("Unhandled error while answering a request:", err);
+  return json({ error: "Something went wrong" }, { status: 500 });
 }
 
 /** Wrap a handler that needs a signed-in user. Handlers may return any Response (e.g. a file download). */
@@ -83,16 +94,58 @@ export function withUser<Ctx>(
   };
 }
 
-export async function readJson<T>(req: Request): Promise<T> {
+/**
+ * How much request body is read before it is refused.
+ *
+ * Every legitimate request here is a small JSON object — a sign-in, a settings change, a list
+ * of at most 200 clip keys — so this is orders of magnitude above anything the app sends. A
+ * route handler gets no body limit from the framework, so without this an unauthenticated
+ * client can make the server buffer as much as it cares to send, on a route that parses
+ * before it throttles.
+ */
+export const MAX_REQUEST_BYTES = 64 * 1024;
+
+/**
+ * Read a body through a counting stream rather than req.json().
+ *
+ * Content-Length cannot be the guard: it is absent under chunked transfer encoding, which is
+ * exactly what a client sending an unbounded body would use. It is still worth an early
+ * refusal when it is present and already too large.
+ */
+async function readCappedBody(req: Request, limit: number): Promise<string> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw new UserFacingError("Request body is too large", 413);
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) throw new UserFacingError("Request body is too large", 413);
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return text + decoder.decode();
+}
+
+export async function readJson<T>(req: Request, limit = MAX_REQUEST_BYTES): Promise<T> {
   // A cross-site form can only post text/plain, multipart or urlencoded, so insisting on
   // JSON here is a second, independent guard on the same hole as assertSameSite.
   const type = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   if (type !== "application/json" && !type.endsWith("+json")) {
-    throw new Error("Request body must be JSON");
+    throw new UserFacingError("Request body must be JSON");
   }
+  const text = await readCappedBody(req, limit);
   try {
-    return (await req.json()) as T;
+    return JSON.parse(text) as T;
   } catch {
-    throw new Error("Request body must be JSON");
+    throw new UserFacingError("Request body must be JSON");
   }
 }

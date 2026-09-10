@@ -85,4 +85,18 @@ csrf="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: text/plain' \
   -d '{"email":"smoke@example.com","password":"password123","x":"="}')"
 [ "$csrf" = "403" ] || fail "a cross-site sign-in was not refused: $csrf"
 
+echo "-> every response carries the security headers"
+# Only a running server proves this: the unit test checks the config, this checks that the
+# framework actually applies it to a real response.
+hdrs="$(curl -sSI "$BASE/")"
+case "$hdrs" in *"frame-ancestors 'none'"*) ;; *) fail "no Content-Security-Policy with frame-ancestors" ;; esac
+case "$hdrs" in *nosniff*) ;; *) fail "no X-Content-Type-Options" ;; esac
+case "$hdrs" in *[Xx]-[Pp]owered-[Bb]y*) fail "X-Powered-By is still advertised" ;; esac
+
+echo "-> an oversized body is refused rather than buffered"
+big="$(printf '%070000d' 0 | tr '0' 'x')"
+code="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$BASE/api/auth/login" \
+  -d "{\"email\":\"smoke@example.com\",\"password\":\"$big\"}")"
+[ "$code" = "413" ] || fail "a 70 KB sign-in body was not refused: $code"
+
 echo "SMOKE PASS"
