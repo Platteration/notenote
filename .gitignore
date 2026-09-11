@@ -12,3 +12,7 @@ data/
 npm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
+
+# Secrets: ignore every .env variant, but keep the documented template.
+.env*
+!.env.example
