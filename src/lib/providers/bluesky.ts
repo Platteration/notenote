@@ -10,7 +10,7 @@
  */
 import { UserFacingError } from "../errors";
 import { assertPublicHost } from "../net-guard";
-import { getJson } from "./http";
+import { getJson, ProviderHttpError } from "./http";
 import type { MediaItem, OAuthTokens, SocialProvider } from "./types";
 
 const DEFAULT_SERVICE = "https://bsky.social";
@@ -107,7 +107,15 @@ export const bluesky: SocialProvider = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier, password }),
       });
-      if (session.error) throw new UserFacingError(`Bluesky: ${session.message ?? session.error}`);
+      // AT Protocol reports a refusal as a non-2xx, which getJson has already turned into a
+      // ProviderHttpError — but nothing stops a host answering 200 with an `error` key, and its
+      // `message` is then a sentence the host's owner wrote. Quoting it would put
+      // attacker-chosen text on the Connections page in the app's own voice, next to the field
+      // the person is typing an app password into. The detail goes to the log instead, and
+      // `credentialConnectError` supplies this app's own sentence.
+      if (session.error || !session.accessJwt) {
+        throw new ProviderHttpError("bluesky", 401, String(session.error ?? "no session in the reply"));
+      }
       return {
         accessToken: session.accessJwt,
         refreshToken: session.refreshJwt,

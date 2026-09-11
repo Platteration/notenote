@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeWindow, formatCountdown, parseWindowStart, zonedTimeToInstant } from "@/lib/window";
+import { cachedFormatterCount, canonicalTimeZone, computeWindow, formatCountdown, parseWindowStart, zonedTimeToInstant } from "@/lib/window";
 
 describe("zonedTimeToInstant", () => {
   it("converts wall clock time in a fixed-offset zone", () => {
@@ -63,5 +63,41 @@ describe("helpers", () => {
   it("formats countdowns", () => {
     expect(formatCountdown(3661)).toBe("1h 01m 01s");
     expect(formatCountdown(59)).toBe("0m 59s");
+  });
+});
+
+/**
+ * A timezone is a string from a settings row, and every distinct spelling of one used to become
+ * a permanent `Intl.DateTimeFormat` in this module: ~28 KB of native state per spelling, with
+ * 2^24 spellings of `America/Argentina/Buenos_Aires` alone and no limit on the settings
+ * endpoint. Two things stop it, and both are checked here.
+ */
+describe("the formatter cache", () => {
+  /** Case permutations of one real zone, which Intl accepts every one of. */
+  function spelling(base: string, n: number): string {
+    const letters = [...base].flatMap((c, i) => (/[a-z]/i.test(c) ? [i] : []));
+    const chars = [...base.toLowerCase()];
+    for (let bit = 0; bit < letters.length; bit++) if ((n >> bit) & 1) chars[letters[bit]] = chars[letters[bit]].toUpperCase();
+    return chars.join("");
+  }
+
+  it("collapses every spelling of a zone onto the one the platform reports", () => {
+    const zone = "America/Argentina/Buenos_Aires";
+    // Derived from Intl rather than from a written-out constant: whatever it calls this zone,
+    // every spelling of it has to arrive at the same string.
+    const canonical = canonicalTimeZone(zone);
+    expect(canonical).toBeTruthy();
+    for (let i = 1; i < 40; i++) expect(canonicalTimeZone(spelling(zone, i))).toBe(canonical);
+    expect(canonicalTimeZone("Not/A_Zone")).toBeNull();
+  });
+
+  it("stays bounded even when something does get a thousand spellings past it", () => {
+    const spellings = 1000;
+    for (let i = 1; i <= spellings; i++) computeWindow(Date.UTC(2026, 8, 6, 12), spelling("America/Argentina/Buenos_Aires", i), "20:00");
+    // The count is what the run produced, not a constant from window.ts: unbounded, it would be
+    // one entry per spelling.
+    expect(cachedFormatterCount()).toBeLessThan(spellings);
+    // Still a cache: the last zone asked for is in it.
+    expect(cachedFormatterCount()).toBeGreaterThan(0);
   });
 });

@@ -45,6 +45,21 @@ export function rateLimit(key: string, limit: number, windowMs: number, now: num
   return { ok: true, remaining: limit - bucket.count, retryAfter };
 }
 
+/**
+ * Whether `key` is already at its limit, without spending an attempt.
+ *
+ * For a bucket that should be charged for what a request *did* rather than for having been
+ * made: peek on the way in, charge on the way out. A deployment-wide ceiling charged on the way
+ * in is a ceiling anyone can spend on requests that do nothing.
+ */
+export function peekRateLimit(key: string, limit: number, now: number = Date.now()): RateLimitResult {
+  const bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) return { ok: true, remaining: limit, retryAfter: 0 };
+  const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+  if (bucket.count >= limit) return { ok: false, remaining: 0, retryAfter };
+  return { ok: true, remaining: limit - bucket.count, retryAfter };
+}
+
 /** Forget a key, e.g. after a successful sign-in, so one bad guess doesn't linger. */
 export function clearRateLimit(key: string): void {
   buckets.delete(key);

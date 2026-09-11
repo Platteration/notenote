@@ -17,6 +17,21 @@ const ERRORS: Record<string, string> = {
   "exchange-failed": "The platform rejected the token exchange. Check the server logs.",
 };
 
+/**
+ * The sentence shown for an `?error=` a callback (or anyone with a link) put in the URL.
+ *
+ * An own-property lookup, and a string or the fallback. `ERRORS` is an object literal, so a bare
+ * index answers `__proto__` with `Object.prototype` and `constructor` with a function — neither
+ * of them nullish, so `??` never fires and React is handed something it cannot render, which
+ * throws and takes the whole Connections panel down for that page load: no platform list, no
+ * connect or disconnect buttons, no credential form.
+ */
+export function connectErrorText(param: string): string {
+  const key = param.replace(/^[a-z]+-/, "");
+  const text = Object.prototype.hasOwnProperty.call(ERRORS, key) ? ERRORS[key] : undefined;
+  return typeof text === "string" ? text : "Something went wrong.";
+}
+
 function CredentialForm({
   connection,
   onConnected,
@@ -87,7 +102,7 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
   const [justConnected, setJustConnected] = useState<string | null>(params.get("connected"));
 
   const errorParam = params.get("error");
-  const errorText = errorParam ? ERRORS[errorParam.replace(/^[a-z]+-/, "")] ?? "Something went wrong." : null;
+  const errorText = errorParam ? connectErrorText(errorParam) : null;
 
   async function disconnect(provider: string) {
     setBusy(provider);

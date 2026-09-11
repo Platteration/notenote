@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { enabledProviderIds, PROVIDERS } from "@/lib/providers";
+import { enabledProviderIds, getProvider, PROVIDERS } from "@/lib/providers";
 import { serviceFromScope } from "@/lib/providers/bluesky";
 import { demoItems } from "@/lib/providers/demo";
-import { detectPlatform, nativeUrl, PROVIDER_META } from "@/lib/providers/meta";
+import { detectPlatform, nativeUrl, PROVIDER_META, providerMeta, providerName } from "@/lib/providers/meta";
 import { PROVIDER_IDS } from "@/lib/providers/types";
+import { connectErrorText } from "@/components/ConnectionsPanel";
 
 describe("provider registry", () => {
   it("registers every platform with metadata, a logo and a demo catalogue", () => {
@@ -63,5 +64,39 @@ describe("native deep links", () => {
   it("falls back to the permalink where no reliable scheme exists", () => {
     expect(nativeUrl({ ...base, provider: "threads", externalId: "1" }, "ios")).toBeNull();
     expect(nativeUrl({ ...base, provider: "snapchat", externalId: "1" }, "android")).toBeNull();
+  });
+});
+
+/**
+ * Every table here is an object literal, so a bare index answers with whatever
+ * `Object.prototype` has under that name. The ids reaching these lookups come from a URL
+ * segment, a stored row and a query parameter, and one of them — the `?error=` on the
+ * Connections page — was reachable: `/connect?error=__proto__` put `Object.prototype` where a
+ * sentence should be and took the whole panel down.
+ */
+describe("names that exist on every object", () => {
+  // Derived from the prototype itself, so anything added to it is covered here too.
+  const inherited = Object.getOwnPropertyNames(Object.prototype).filter((n) => n !== "__proto__").concat("__proto__");
+
+  it("are not providers", () => {
+    for (const name of inherited) expect(getProvider(name)).toBeNull();
+  });
+
+  it("have no platform metadata", () => {
+    for (const name of inherited) {
+      expect(providerMeta(name)).toBeNull();
+      // providerName falls back to the id it was given, and that id is a string.
+      expect(providerName(name)).toBe(name);
+    }
+  });
+
+  it("get the app's own sentence on the Connections page, not an object", () => {
+    for (const name of inherited) {
+      expect(connectErrorText(name)).toBe("Something went wrong.");
+      // The callback prefixes a provider id: `?error=yt-__proto__` reaches the same lookup.
+      expect(connectErrorText(`yt-${name}`)).toBe("Something went wrong.");
+    }
+    // A real one still reads as itself.
+    expect(connectErrorText("denied")).toMatch(/cancelled/i);
   });
 });

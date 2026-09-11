@@ -35,9 +35,23 @@ interface WallClock {
 
 const dtfCache = new Map<string, Intl.DateTimeFormat>();
 
+/**
+ * A ceiling on the formatter cache.
+ *
+ * Each entry holds a native ICU formatter and retains about 28 KB for the life of the process,
+ * and the zone it is keyed on comes from a settings row — which `saveSettings` now stores in the
+ * platform's own spelling, so the key space is the few hundred real zone names. This is the
+ * second half of that: a cache keyed on anything a request can influence needs a bound of its
+ * own, and 500 is far above the working set of one zone per active user. Clearing rather than
+ * evicting one entry because rebuilding a formatter costs a few milliseconds and this should
+ * essentially never happen.
+ */
+const MAX_CACHED_FORMATTERS = 500;
+
 function formatter(timeZone: string): Intl.DateTimeFormat {
   let f = dtfCache.get(timeZone);
   if (!f) {
+    if (dtfCache.size >= MAX_CACHED_FORMATTERS) dtfCache.clear();
     f = new Intl.DateTimeFormat("en-US", {
       timeZone,
       hourCycle: "h23",
@@ -92,13 +106,29 @@ export function zonedTimeToInstant(
   return guess;
 }
 
-export function isValidTimeZone(tz: string): boolean {
+/**
+ * The platform's own spelling of a zone, or null when it is not one.
+ *
+ * Intl accepts any case: `America/New_York`, `america/new_york` and `aMeRiCa/nEw_YoRk` are all
+ * the same zone and all valid, which makes one zone name 2^24 distinct strings — each of them a
+ * different settings row, a different cache key above, and 28 KB of retained memory. Storing
+ * what the platform resolves it to collapses them onto one.
+ */
+export function canonicalTimeZone(tz: string): string | null {
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return true;
+    return new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isValidTimeZone(tz: string): boolean {
+  return canonicalTimeZone(tz) !== null;
+}
+
+/** Only for tests. */
+export function cachedFormatterCount(): number {
+  return dtfCache.size;
 }
 
 export function parseWindowStart(value: string): { hour: number; minute: number } | null {

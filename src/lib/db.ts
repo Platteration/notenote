@@ -5,6 +5,7 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { upgradeCiphertext } from "./crypto";
 
 export interface UserRow {
   id: string;
@@ -144,13 +145,30 @@ declare global {
   var __dailyScrollDb: DatabaseSync | undefined;
 }
 
+/**
+ * Owner-only, applied rather than requested.
+ *
+ * `mkdirSync`'s mode only applies to a directory it creates, and the deployment shape
+ * .env.example recommends is one the operator makes themselves — `mkdir`, a systemd
+ * `StateDirectory=`, a Docker volume — all of which arrive at 0755. SQLite then creates the
+ * database, its WAL and its shared-memory file at 0644, and the file is the thing another
+ * account on the host actually reads: every email address and password hash, every encrypted
+ * platform token, every push endpoint with its keys. Best effort, because a filesystem with no
+ * modes, or a path owned by someone else, must not stop the app from starting — but it says so.
+ */
+function restrict(target: string, mode: number): void {
+  try {
+    fs.chmodSync(target, mode);
+  } catch {
+    console.warn(`Could not make ${target} owner-only; check its permissions by hand.`);
+  }
+}
+
 export function getDb(): DatabaseSync {
   if (globalThis.__dailyScrollDb) return globalThis.__dailyScrollDb;
   const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
-  // Owner-only: the file underneath holds encrypted platform tokens and every session row,
-  // and on a shared host the default permissions make that world-readable. Applies when the
-  // directory is created; an existing one is left as the operator set it.
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  restrict(dataDir, 0o700);
   const file =
     process.env.DATABASE_FILE === ":memory:"
       ? ":memory:"
@@ -158,6 +176,8 @@ export function getDb(): DatabaseSync {
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  // After the first exec, so the WAL and shared-memory files exist to be restricted too.
+  if (file !== ":memory:") for (const f of [file, `${file}-wal`, `${file}-shm`]) restrict(f, 0o600);
   migrate(db);
   globalThis.__dailyScrollDb = db;
   return db;
@@ -170,6 +190,32 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, ddl: stri
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
+/**
+ * Re-key provider tokens written under the superseded key derivation.
+ *
+ * Those ciphertexts were encrypted with a bare sha256 of SESSION_SECRET and carry a key id that
+ * was a free offline verifier for it, so leaving them in place would leave the hole open for
+ * every connection made before this version. A row no configured secret can open is left
+ * exactly as it is — a secret rotated away without PREVIOUS_SESSION_SECRETS is not this
+ * migration's to lose — and upgrades itself the next time it is opened.
+ */
+function reencryptTokens(db: DatabaseSync): void {
+  const rows = db.prepare("SELECT user_id, provider, access_token, refresh_token FROM connections").all() as unknown as Array<
+    Pick<ConnectionRow, "user_id" | "provider" | "access_token" | "refresh_token">
+  >;
+  for (const row of rows) {
+    const access = upgradeCiphertext(row.access_token);
+    const refresh = row.refresh_token ? upgradeCiphertext(row.refresh_token) : null;
+    if (!access && !refresh) continue;
+    db.prepare("UPDATE connections SET access_token = ?, refresh_token = ? WHERE user_id = ? AND provider = ?").run(
+      access ?? row.access_token,
+      refresh ?? row.refresh_token,
+      row.user_id,
+      row.provider,
+    );
+  }
+}
+
 /** Bring databases created by earlier versions up to the current schema. */
 function migrate(db: DatabaseSync): void {
   ensureColumn(db, "settings", "prefs", "prefs TEXT NOT NULL DEFAULT '{}'");
@@ -180,6 +226,7 @@ function migrate(db: DatabaseSync): void {
     `INSERT OR IGNORE INTO hour_opens (user_id, day_key, opened_at)
      SELECT user_id, day_key, generated_at FROM daily_feeds`,
   );
+  reencryptTokens(db);
 }
 
 export function now(): number {

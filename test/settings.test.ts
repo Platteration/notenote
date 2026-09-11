@@ -6,6 +6,7 @@ process.env.SESSION_SECRET = "test-secret-for-settings-tests";
 const { signUp } = await import("@/lib/auth");
 const { DEFAULT_PREFS, getSettings, saveSettings } = await import("@/lib/settings");
 const { THEMES } = await import("@/lib/theme");
+const { canonicalTimeZone } = await import("@/lib/window");
 
 let userId: string;
 
@@ -52,5 +53,18 @@ describe("preferences", () => {
     expect(() => saveSettings(userId, { windowStart: "25:00" })).toThrow(/HH:MM/);
     expect(() => saveSettings(userId, { feedSize: 500 })).toThrow(/between/);
     expect(() => saveSettings(userId, { timezone: "Mars/Olympus" })).toThrow(/timezone/i);
+  });
+});
+
+describe("timezone", () => {
+  it("is stored in the platform's own spelling, whatever case it arrives in", () => {
+    // Intl accepts every case permutation of a zone name, and a stored spelling becomes a
+    // formatter held for the life of the process — so the collapsing happens on the way in.
+    saveSettings(userId, { timezone: "aMeRiCa/nEw_YoRk" });
+    expect(getSettings(userId).timezone).toBe(canonicalTimeZone("America/New_York"));
+  });
+
+  it("still refuses something that is not a zone", () => {
+    expect(() => saveSettings(userId, { timezone: "Not/A_Zone" })).toThrow(/timezone/i);
   });
 });

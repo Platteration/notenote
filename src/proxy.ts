@@ -15,6 +15,11 @@
  *
  * `process.env` is passed as an object rather than read as `process.env.APP_BASE_URL` so that
  * nothing can be substituted for it at build time.
+ *
+ * The cost of this file existing: Next clones and buffers every request body so that a proxy
+ * and a route handler can both read it, before any handler runs. `next.config.ts` caps that at
+ * 128 KB (`experimental.proxyClientMaxBodySize`) so it cannot outrun `MAX_REQUEST_BYTES`;
+ * without the cap the framework's own 10 MB default applies to every unauthenticated request.
  */
 import { NextResponse } from "next/server";
 import { securityHeaders } from "@/lib/security-headers";

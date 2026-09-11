@@ -33,6 +33,18 @@ export async function register(): Promise<void> {
           "That key is public: do not connect a real account to this server, and do not expose it.",
       );
     }
+  } else if (secret.length < 32) {
+    /**
+     * Length is a poor stand-in for entropy, and it is the only one available here. This is a
+     * warning rather than a refusal because a deployment that boots today must not stop booting
+     * because the rule changed: the key is stretched with scrypt now, which buys a chosen
+     * phrase several orders of magnitude, but a phrase somebody thought of is still a wordlist
+     * away from the tokens it protects.
+     */
+    warnings.push(
+      `SESSION_SECRET is ${secret.length} characters and should be generated rather than chosen: ` +
+        "`openssl rand -base64 32`. It is the key protecting every stored platform token.",
+    );
   }
 
   const base = process.env.APP_BASE_URL;
@@ -46,6 +58,20 @@ export async function register(): Promise<void> {
   const privateKey = process.env.VAPID_PRIVATE_KEY;
   if (Boolean(publicKey) !== Boolean(privateKey)) {
     problems.push("VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together; push is disabled until both are present.");
+  }
+
+  /**
+   * Derive the token key here rather than on whichever request first encrypts something.
+   * Stretching it costs a few hundred milliseconds and needs its salt file in DATA_DIR, so a
+   * directory that cannot be written to should say so at boot, like everything else here.
+   */
+  if (problems.length === 0) {
+    try {
+      const { prepareTokenKey } = await import("./lib/crypto");
+      prepareTokenKey();
+    } catch (err) {
+      problems.push(`Provider tokens cannot be encrypted: ${(err as Error).message}`);
+    }
   }
 
   if (warnings.length > 0) {

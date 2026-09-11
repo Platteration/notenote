@@ -23,7 +23,12 @@ type Env = Record<string, string | undefined>;
  * `data:` because demo thumbnails are inline SVG.
  */
 export function contentSecurityPolicy(env: Env = process.env): string {
-  const dev = env.NODE_ENV !== "production";
+  // `next dev` sets NODE_ENV=development and nothing else does, so the loosenings below are
+  // asked for by name. Reading this as "anything that is not production" was safe while the
+  // policy was frozen at build time, and is not now that it is decided per request: a built
+  // server started with NODE_ENV=staging, or with the variable unset, would serve
+  // `'unsafe-eval'` and `ws:` to real users.
+  const dev = env.NODE_ENV === "development";
   return [
     "default-src 'self'",
     "img-src 'self' https: data:",

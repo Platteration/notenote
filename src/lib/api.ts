@@ -98,10 +98,15 @@ export function withUser<Ctx>(
  * How much request body is read before it is refused.
  *
  * Every legitimate request here is a small JSON object — a sign-in, a settings change, a list
- * of at most 200 clip keys — so this is orders of magnitude above anything the app sends. A
- * route handler gets no body limit from the framework, so without this an unauthenticated
- * client can make the server buffer as much as it cares to send, on a route that parses
- * before it throttles.
+ * of at most 200 clip keys — so this is orders of magnitude above anything the app sends.
+ *
+ * This is the app's own refusal and it is not the first thing a body meets: because the app has
+ * a `src/proxy.ts`, Next buffers each body before any handler is entered, which is why
+ * `next.config.ts` caps that buffering at 128 KB. The framework truncates past its cap rather
+ * than refusing, so this limit — half of it — is still what turns an over-long body into a 413.
+ * Neither limit is redundant: without this one a 128 KB body would be parsed, and without the
+ * framework's an unauthenticated client could make the server hold 10 MB per connection on a
+ * route that never reads a body at all.
  */
 export const MAX_REQUEST_BYTES = 64 * 1024;
 

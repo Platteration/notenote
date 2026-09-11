@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const { default: nextConfig } = await import("../next.config");
 const { contentSecurityPolicy, securityHeaders } = await import("@/lib/security-headers");
+const { MAX_REQUEST_BYTES } = await import("@/lib/api");
 const proxyModule = await import("@/proxy");
 
 /** The policy as a lookup of directive -> sources, so assertions read like the header does. */
@@ -67,6 +68,17 @@ describe("security headers", () => {
     expect(directives(development)["connect-src"]).toContain("ws:");
   });
 
+  it("loosens only for `next dev`, not for anything that merely isn't production", () => {
+    // The policy is decided per request now, so the running server's NODE_ENV decides it. A
+    // built server started with NODE_ENV=staging, or with it unset, is serving real users.
+    for (const env of [{ NODE_ENV: "staging" }, {}, { NODE_ENV: "test" }]) {
+      const csp = contentSecurityPolicy(env);
+      expect(csp).not.toContain("unsafe-eval");
+      expect(csp).not.toContain("ws:");
+    }
+    expect(contentSecurityPolicy({ NODE_ENV: "development" })).toContain("unsafe-eval");
+  });
+
   it("promises https only where the deployment says it serves https", () => {
     expect(headerMap({ NODE_ENV: "production", APP_BASE_URL: "https://scroll.example" })["Strict-Transport-Security"]).toMatch(
       /max-age=31536000/,
@@ -117,5 +129,39 @@ describe("where the headers are decided", () => {
   it("runs for every request: no matcher narrows the proxy", () => {
     // The config entry it replaced was `/:path*`. A matcher here would silently uncover paths.
     expect((proxyModule as { config?: unknown }).config).toBeUndefined();
+  });
+});
+
+/** Next's `SizeLimit`: either a byte count or a string like "128kb". */
+function sizeInBytes(limit: unknown): number {
+  if (typeof limit === "number") return limit;
+  const m = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)$/i.exec(String(limit));
+  if (!m) throw new Error(`not a size: ${String(limit)}`);
+  return Number(m[1]) * { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 }[m[2].toLowerCase() as "b" | "kb" | "mb" | "gb"];
+}
+
+/**
+ * What having a proxy costs.
+ *
+ * Because this file exists at all, Next clones and buffers every request body so the proxy and
+ * the route handler can both read it — before the handler is entered. Whatever that ceiling is
+ * therefore outranks `MAX_REQUEST_BYTES`, the sign-in limits and `assertSameSite`: on the
+ * framework's 10 MB default, an unauthenticated client could hold megabytes per connection on a
+ * route that reads no body at all.
+ */
+describe("the body the framework buffers before any handler runs", () => {
+  const configured = nextConfig.experimental?.proxyClientMaxBodySize;
+
+  it("is capped, which having a proxy does not do on its own", () => {
+    expect(configured).toBeDefined();
+  });
+
+  it("is the size a handler will accept, not orders of magnitude above it", () => {
+    // Derived from MAX_REQUEST_BYTES rather than written out, so moving one and not the other
+    // fails here. Above it, because the framework truncates past its own cap rather than
+    // refusing, and the 413 should still come from the app's counting stream.
+    const buffered = sizeInBytes(configured);
+    expect(buffered).toBeGreaterThan(MAX_REQUEST_BYTES);
+    expect(buffered).toBeLessThanOrEqual(MAX_REQUEST_BYTES * 4);
   });
 });

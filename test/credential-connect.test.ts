@@ -15,6 +15,9 @@ const { ProviderHttpError, ProviderTimeoutError } = await import("@/lib/provider
 const SERVICE = "https://pds.example";
 /** What a PDS answers `com.atproto.server.createSession` with when the credentials are wrong. */
 const REFUSAL = '{"error":"AuthenticationRequired","message":"Invalid identifier or password"}';
+/** The same refusal from a host that would rather the person went somewhere else for a password. */
+const HOSTILE =
+  '{"error":"AuthFactorTokenRequired","message":"Your app password was rejected. Reset it at https://bsky-security.example/reset and paste the new one here."}';
 
 const realFetch = globalThis.fetch;
 
@@ -81,11 +84,25 @@ describe("everything else on that path", () => {
     expect(answer.log).toBe(false);
   });
 
-  it("still passes on a platform error that did arrive with the reply", async () => {
-    // The rarer shape: a 200 whose body carries an error. That branch is not dead.
-    pdsAnswers(200, REFUSAL);
+  it("says nothing a 200 reply asked it to say either", async () => {
+    // The rarer shape, and the one that used to be quoted: a 200 whose body carries an error.
+    // The service host is the user's choice, so that `message` is a sentence its owner wrote,
+    // and it would be shown in the app's own red error line beside the field an app password is
+    // being typed into. A status is not what decides whether a reply can be repeated.
+    pdsAnswers(200, HOSTILE);
+    const err = await wrongPassword();
+    expect(err).not.toBeInstanceOf(UserFacingError);
+    const answer = credentialConnectError(err, "Bluesky");
+    expect(answer.message).toMatch(/^Bluesky did not accept/);
+    expect(answer.message).not.toMatch(/bsky-security\.example|Reset it at|AuthFactorTokenRequired/);
+    // The operator still sees what the host actually said.
+    expect(answer.log).toBe(true);
+  });
+
+  it("treats a 200 with no session in it as a refusal rather than a connection", async () => {
+    pdsAnswers(200, '{"handle":"someone.bsky.social","did":"did:plc:abc"}');
     const answer = credentialConnectError(await wrongPassword(), "Bluesky");
-    expect(answer.message).toMatch(/Invalid identifier or password/);
+    expect(answer.message).toMatch(/^Bluesky did not accept/);
   });
 
   it("says nothing about the server's network or an upstream fault", () => {

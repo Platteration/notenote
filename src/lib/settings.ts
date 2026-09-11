@@ -1,7 +1,7 @@
 import { getDb, now, type SettingsRow } from "./db";
 import { UserFacingError } from "./errors";
 import { isTheme, THEMES, type Theme } from "./theme";
-import { isValidTimeZone, parseWindowStart } from "./window";
+import { canonicalTimeZone, parseWindowStart } from "./window";
 
 export { THEMES };
 export type { Theme };
@@ -61,8 +61,13 @@ export function saveSettings(userId: string, input: Partial<Omit<Settings, "pref
   const current = getSettings(userId);
   const next: Settings = { ...current, prefs: { ...current.prefs } };
   if (input.timezone !== undefined) {
-    if (!isValidTimeZone(input.timezone)) throw new UserFacingError("Unknown timezone");
-    next.timezone = input.timezone;
+    // Stored in the platform's own spelling: Intl accepts every case permutation of a zone name,
+    // and each distinct spelling that reaches window.ts is a formatter cached for the life of
+    // the process. One 120-byte settings write should not be able to retain 28 KB of server
+    // memory, so the collapsing happens here, where the value is written.
+    const zone = canonicalTimeZone(input.timezone);
+    if (!zone) throw new UserFacingError("Unknown timezone");
+    next.timezone = zone;
   }
   if (input.windowStart !== undefined) {
     const parsed = parseWindowStart(input.windowStart);

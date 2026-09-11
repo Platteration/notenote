@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearRateLimit, clientKey, rateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
+import { clearRateLimit, clientKey, peekRateLimit, rateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
 
 beforeEach(() => resetAllRateLimits());
 
@@ -24,6 +24,18 @@ describe("rate limit", () => {
     for (let i = 0; i < 3; i++) rateLimit("k", 3, 60_000, T0);
     expect(rateLimit("k", 3, 60_000, T0 + 59_000).ok).toBe(false);
     expect(rateLimit("k", 3, 60_000, T0 + 60_001).ok).toBe(true);
+  });
+
+  it("can be read without spending an attempt", () => {
+    // What a bucket charged for work done rather than for a request made needs: sign-up peeks
+    // on the way in and charges on the way out.
+    expect(peekRateLimit("k", 3, T0).remaining).toBe(3);
+    rateLimit("k", 3, 60_000, T0);
+    expect(peekRateLimit("k", 3, T0).remaining).toBe(2);
+    expect(peekRateLimit("k", 3, T0).remaining).toBe(2);
+    for (let i = 0; i < 2; i++) rateLimit("k", 3, 60_000, T0);
+    expect(peekRateLimit("k", 3, T0).ok).toBe(false);
+    expect(peekRateLimit("k", 3, T0 + 60_001).ok).toBe(true);
   });
 
   it("keeps separate keys independent", () => {

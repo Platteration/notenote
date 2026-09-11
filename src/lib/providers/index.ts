@@ -45,9 +45,17 @@ export function enabledProviders(): SocialProvider[] {
   return enabledProviderIds().map((id) => PROVIDERS[id]);
 }
 
-/** Look up an *enabled* provider by id; disabled or unknown ids return null. */
+/**
+ * Look up an *enabled* provider by id; disabled or unknown ids return null.
+ *
+ * An own-property lookup, never a bare index: the id is a URL segment, and every name on
+ * `Object.prototype` — `constructor`, `__proto__`, `toString` — is truthy on a plain table, so
+ * a bare index answers `/api/connect/constructor` with something that is not a provider.
+ */
 export function getProvider(id: string): SocialProvider | null {
-  const provider = (PROVIDERS as Record<string, SocialProvider>)[id] ?? null;
+  const provider = Object.prototype.hasOwnProperty.call(PROVIDERS, id)
+    ? (PROVIDERS as Record<string, SocialProvider>)[id]
+    : null;
   if (!provider) return null;
   return enabledProviderIds().includes(provider.id) ? provider : null;
 }

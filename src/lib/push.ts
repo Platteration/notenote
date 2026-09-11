@@ -145,6 +145,16 @@ export async function notifyHourOpen(userId: string, dayKey: string, minutes: nu
 
   await Promise.all(
     due.map(async (row) => {
+      // Checked again here, not only when it was registered: a name that resolved publicly at
+      // registration can point at 127.0.0.1 or 169.254.169.254 by the time this job runs, and
+      // this job runs every minute. The Bluesky service host is re-checked before every request
+      // for exactly this reason (lib/providers/bluesky.ts); a push endpoint is the same kind of
+      // destination. The row is left in place rather than deleted, because a name that fails to
+      // resolve for a minute is a DNS hiccup, not consent to forget someone's device.
+      if (!(await isReachableEndpoint(row.endpoint))) {
+        result.failed++;
+        return;
+      }
       try {
         await webpush.sendNotification(toWebPush(row), payload, { TTL: 60 * 50 });
         db.prepare("UPDATE push_subscriptions SET last_open_day = ? WHERE endpoint = ?").run(dayKey, row.endpoint);

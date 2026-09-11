@@ -18,7 +18,9 @@ const push = await import("@/lib/push");
 const { MAX_SUBSCRIPTIONS_PER_USER } = push;
 
 let userId: string;
-const sub = (n: number) => ({ endpoint: `https://push.example.com/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
+// An address literal, because the send path checks the destination again before every send:
+// a name here would need a DNS lookup in a test run, and would mean the guard was not exercised.
+const sub = (n: number) => ({ endpoint: `https://93.184.216.34/push/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
 
 beforeAll(async () => {
   userId = (await signUp({ email: "push@example.com", displayName: "Push", password: "password123" })).id;
@@ -102,6 +104,25 @@ describe("where the server is willing to send", () => {
   it("accepts a publicly routable one", async () => {
     // An address literal, so the check is exercised without a DNS lookup in a test run.
     await expect(push.isReachableEndpoint("https://93.184.216.34/wp/abc")).resolves.toBe(true);
+  });
+
+  it("checks again at send time, because a name that resolved publicly can be re-pointed", async () => {
+    // Written straight into the table: this is the state an account reaches by registering a
+    // name it controls and then pointing it at an internal address, which registration cannot
+    // see. The daily job reads this row every minute until it succeeds.
+    getDb()
+      .prepare("INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run("https://169.254.169.254/latest/meta-data/", userId, "p", "a", 1000);
+    sendNotification.mockResolvedValue({});
+
+    const result = await push.notifyHourOpen(userId, "2026-09-06", 60);
+
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+    // Not deleted either: a name that fails to resolve for a minute is not consent to forget a
+    // device, and nothing was sent to it.
+    expect(push.subscriptionsFor(userId)).toHaveLength(1);
   });
 });
 

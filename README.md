@@ -30,9 +30,11 @@ connect  ->  fetch  ->  curate  ->  freeze for the day  ->  open for 60 min  -> 
 ```
 
 1. **Connect.** Each platform is an OAuth provider under `src/lib/providers/`. Tokens are
-   encrypted (AES-256-GCM) before they touch the database and refreshed when they expire. Each
-   ciphertext names the key that wrote it, so `SESSION_SECRET` can be rotated without stranding
-   them — see `PREVIOUS_SESSION_SECRETS` in `.env.example`.
+   encrypted (AES-256-GCM) before they touch the database and refreshed when they expire. The
+   key is stretched from `SESSION_SECRET` with scrypt and a per-deployment salt kept beside the
+   database (`DATA_DIR/token-key.salt`), so a stolen file is not a wordlist away from every
+   token in it. Each ciphertext names the key that wrote it, so `SESSION_SECRET` can be rotated
+   without stranding them — see `PREVIOUS_SESSION_SECRETS` in `.env.example`.
 2. **Fetch.** Every connected platform returns normalised `MediaItem`s. Results are cached for
    six hours so the platforms are not hammered; stale data is served if a platform errors.
 3. **Curate** (`src/lib/curation.ts`). Short-form only (≤ 90 s), unseen, published in the last
@@ -305,19 +307,32 @@ change to the environment alone changes what is served.
 
 Sign-in and sign-up are throttled by a small in-memory fixed-window limiter
 (`src/lib/rate-limit.ts`). Password guessing is limited per address, and more strictly per
-account *and* address — keying the strict limit on the account alone would let anyone lock a
-real user out of their own account with a handful of wrong guesses. A much looser account-wide
-ceiling still catches a distributed attack. Credentials are never checked before the limit,
-because scrypt is deliberately expensive and that would turn sign-in into a CPU exhaustion
-vector. A successful sign-in clears that account's bucket for that address, but not the shared
-per-address one: anyone with an account of their own could otherwise reset it between guesses
-at someone else's.
+account *and* address — a limit keyed on the account alone that *refuses* the request is an
+account-lockout weapon, because a stranger who knows an address can spend it on wrong guesses
+and the owner's correct password is then refused too, with no password reset in this app to
+recover through. So the account-wide ceiling counts rather than refuses: past it a guess waits a
+second and only a wrong one is turned away, while the account's own correct password still gets
+in and empties the bucket. Credentials are never checked before the limits, because scrypt is
+deliberately expensive and that would turn sign-in into a CPU exhaustion vector. A successful
+sign-in also clears that account's bucket for that address, but not the shared per-address one:
+anyone with an account of their own could otherwise reset it between guesses at someone else's.
+
+Every one of those limits is keyed on something the caller picks, so a flood that varies the
+address on each request passes all of them and still pays for a scrypt each time — the decoy
+hash for an unknown account is what makes sign-in indistinguishable, and also what makes each
+flood request expensive. The number of passwords being verified at once is therefore bounded as
+well, and attempts past that are answered 503 rather than queued behind a four-thread pool with
+everyone else's requests. A concurrency ceiling rather than another rate limit, because a
+deployment-wide rate limit on sign-in would be exactly the lockout this section starts by
+avoiding: this one clears as the hashes finish.
 
 **Per-address limits need a reverse proxy.** A route handler cannot read the socket address, so
 the only client identity available is `X-Forwarded-For` — which is whatever the client typed
 unless something trustworthy rewrote it. `TRUSTED_PROXY_HOPS` (default 0) says how many proxies
 do. At 0 the header is ignored and the address-keyed buckets are skipped entirely, leaving the
-account-wide sign-in ceiling and a deliberately generous deployment-wide sign-up ceiling. The
+account-wide sign-in ceiling and a deployment-wide sign-up ceiling — which is charged for an
+account that was created, not for a request that was made, or 200 posts of `{}` would close
+registration for everybody for an hour at a cost of about 5 KB. The
 two failure modes this avoids are mirror images: trusting the header from a direct client gives
 everyone a private bucket per request, and falling back to a shared constant gives an
 unauthenticated stranger a deployment-wide sign-in lockout for twenty wrong passwords. Set
@@ -346,6 +361,14 @@ which told an attacker exactly which addresses were registered and made the deli
 error message worthless. It is now 60ms against 57ms. A test guards the property, and fails if
 the short-circuit comes back.
 
+Sign-up, though, still answers the same question in one request: an address that already has an
+account is told so ("An account with that email already exists"), and a free one gets a 201.
+Closing that means sign-up answering the same way either way — with no email delivery anywhere
+in this app, the person who simply mistyped their own address would be told nothing useful — so
+it is a product decision rather than a patch, and it is open. Until it is made, treat the
+decoy-hash timing property as protecting the sign-in endpoint specifically, not as a claim that
+this deployment will not say which addresses are registered.
+
 Four write paths are bounded, because each is loaded into memory whole when a feed is built, so
 an unbounded one is a way to make that slow and to grow shared storage. Recording a watched clip
 only accepts keys that are actually in one of your own recent feeds; muting is capped at 500
@@ -355,11 +378,17 @@ title, creator or URL cannot be as long as the reply that carried it. That last 
 in `collectItems`, once, so it covers all eleven providers rather than whichever was last
 audited — and it matters most for Bluesky, where the host answering is one the user picked.
 
-Request bodies are read through a counting stream and refused past 64 KB. A route handler gets
-no body limit from the framework, and `Content-Length` cannot be the check because it is absent
-under chunked transfer encoding. Sign-in also runs its per-address limit *before* it reads the
-body, so a client already over the limit cannot make the server buffer and parse anything; the
-account-keyed limits necessarily come after, since the account is in the body. Email is capped
+Request bodies are read through a counting stream and refused past 64 KB, and `Content-Length`
+cannot be the check because it is absent under chunked transfer encoding. That refusal is the
+app's, and it is not the first thing a body meets: because the app emits its security headers
+from `src/proxy.ts`, Next clones and buffers every request body before any handler is entered —
+10 MB of it by default, on any route, including ones that never read a body. `next.config.ts`
+caps that at 128 KB (`experimental.proxyClientMaxBodySize`) so the framework's ceiling and the
+app's are the same number within a doubling; past its own cap the framework truncates rather
+than refuses, which is what leaves the 413 to the counting stream. Sign-in also runs its
+per-address limit *before* it reads the body, so a client already over the limit cannot make the
+server parse anything; the account-keyed limits necessarily come after, since the account is in
+the body. Email is capped
 at 254 characters and a password at 256 wherever one is *written* — signing up, and the new
 password in a change — because beyond that is not a passphrase, it is an upload. Verifying a
 credential applies no ceiling: sign-up had no maximum until recently, so a longer one can
@@ -383,17 +412,40 @@ handle or password the platform refuses comes back as an HTTP 401 rather than as
 carrying its own words, so `credentialConnectError` names that case itself ("Bluesky did not
 accept those credentials") instead of leaving it indistinguishable from a blocked host or an
 outage. The sentence is this app's own — the service host is the user's choice, so its wording
-is never repeated back.
+is never repeated back, whatever status it arrives with: a host answering `200` with an
+`error`/`message` pair is refused in the same words as one answering `401`, because a status is
+not what decides whether a reply can be quoted.
 
 Session cookies are random 32-byte tokens and the database stores only their sha256. Anyone who
 could read the file — a leaked backup, a world-readable `DATA_DIR` — previously held a working
 cookie for every account for up to thirty days, while the passwords in the same file were behind
-scrypt. `DATA_DIR` is now also created owner-only. Upgrading past this signs everyone out once,
-since the old rows hold a value that no longer matches anything.
+scrypt. Upgrading past this signs everyone out once, since the old rows hold a value that no
+longer matches anything.
+
+The file itself is made owner-only, not just the directory. `mkdir`'s mode applies only to a
+directory the app creates, and the deployment shape `.env.example` recommends is one the
+operator made themselves — an ordinary `mkdir`, a systemd `StateDirectory=`, a Docker volume,
+all of which arrive at 0755 — while SQLite creates the database, its write-ahead log and its
+shared-memory file at 0644. Each open therefore restricts the directory to 0700 and those three
+files to 0600, and says so on the console if the filesystem will not have it.
+
+The key those tokens are encrypted under is stretched rather than hashed: scrypt over
+`SESSION_SECRET` with a random per-deployment salt in `DATA_DIR/token-key.salt`, derived once at
+boot. It used to be a single sha256 of the secret, with a sha256 of *that* stored beside every
+ciphertext to name the key — which is a free offline verifier: a 21-character secret fell to a
+wordlist in 148 ms, and with it every access and refresh token in the file. A candidate now
+costs what a password guess costs, the salt makes work against one install useless against
+another, and the key id is an HMAC under the key rather than a hash of it. Tokens written by an
+earlier version still open, and are re-keyed in place the first time this version opens the
+database. **Back the salt file up with the database**: without it, tokens encrypted under it
+have to be reconnected.
 
 A push endpoint is a URL the client chooses and the server POSTs to every day, which makes it
 the second destination in the app a user picks; it goes through the same network guard as a
-Bluesky PDS, so `https://10.0.0.5:8443/admin` cannot be registered and knocked on daily. And a
+Bluesky PDS, so `https://10.0.0.5:8443/admin` cannot be registered and knocked on daily — and,
+like the PDS, it is checked again before every send and not only when it was registered, because
+a name that resolved publicly at registration can be pointed at an internal address afterwards
+and the notify job runs every minute. And a
 subscription belongs to the account that registered it: the endpoint is the primary key across
 all users, and the upsert used to reassign it, so anyone who learned someone else's endpoint
 could take the row over — the victim silently stopped receiving their own notification while the
