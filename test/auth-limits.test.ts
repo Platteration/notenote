@@ -7,6 +7,27 @@ process.env.SESSION_SECRET = "test-secret-for-login-limit-tests";
 const jar = { set: vi.fn(), get: vi.fn(), delete: vi.fn() };
 vi.mock("next/headers", () => ({ cookies: async () => jar }));
 
+/**
+ * How many passwords are being hashed at once, counted at the hasher itself rather than guessed
+ * from timings. The real verification still runs: this only watches it.
+ */
+const hashing = vi.hoisted(() => ({ inFlight: 0, peak: 0 }));
+vi.mock("@/lib/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/crypto")>();
+  return {
+    ...actual,
+    verifyPassword: async (password: string, stored: string) => {
+      hashing.inFlight++;
+      hashing.peak = Math.max(hashing.peak, hashing.inFlight);
+      try {
+        return await actual.verifyPassword(password, stored);
+      } finally {
+        hashing.inFlight--;
+      }
+    },
+  };
+});
+
 const { signUp } = await import("@/lib/auth");
 const { rateLimit, resetAllRateLimits } = await import("@/lib/rate-limit");
 const { POST } = await import("@/app/api/auth/login/route");
@@ -38,6 +59,7 @@ function spendAccountCeiling(email: string): void {
 beforeEach(() => {
   resetAllRateLimits();
   jar.set.mockReset();
+  hashing.peak = 0;
 });
 
 await signUp({ email: VICTIM, displayName: "V", password: PASSWORD });
@@ -63,6 +85,32 @@ describe("wrong guesses against a named account", () => {
     expect(res.headers.get("Retry-After")).toBeTruthy();
   }, 20_000);
 
+  /**
+   * The delay past the ceiling is friction, not a bound, and it used to be applied before
+   * anything counted the request: 500 over-ceiling guesses were all resident for the same
+   * second, each holding a socket and the body the framework had already buffered. That turns
+   * the cheapest refusal in the app into a slowloris amplifier. Only so many are held now, and
+   * the surplus skips the delay rather than being refused — refusing here would be the account
+   * lockout this route exists to avoid.
+   */
+  it("are not all held for that delay at once", async () => {
+    spendAccountCeiling(VICTIM);
+    const timed = async () => {
+      const started = Date.now();
+      const res = await attempt(VICTIM, "not the password");
+      return { status: res.status, ms: Date.now() - started };
+    };
+    // What one over-ceiling guess costs, measured rather than assumed.
+    const solo = await timed();
+    expect(solo.status).toBe(429);
+
+    const burst = await Promise.all(Array.from({ length: 24 }, timed));
+    expect(burst.every((r) => r.status === 429)).toBe(true);
+    // Some of them were answered in a fraction of what one costs, which is only possible if
+    // they were not all waiting out the delay together.
+    expect(burst.filter((r) => r.ms < solo.ms / 2).length).toBeGreaterThan(0);
+  }, 60_000);
+
   it("stop counting as soon as the owner signs in, so they cannot accumulate", async () => {
     spendAccountCeiling(VICTIM);
     expect((await attempt(VICTIM, PASSWORD)).status).toBe(200);
@@ -74,21 +122,46 @@ describe("wrong guesses against a named account", () => {
 /**
  * The other half: an attacker who varies the address instead of repeating one pays no limit at
  * all, because every bucket above is keyed on something they choose. What is left is scrypt on
- * a four-thread pool, which is why the number verifying at once is bounded.
+ * a four-thread pool, which is why the number verifying at once is bounded — and the shape of
+ * that bound is the whole point. A ceiling that *refused* past it was a deployment-wide sign-in
+ * lockout that needed no account name and no address: nine connections of junk sign-ins refused
+ * fourteen of twenty correct passwords. So the ceiling queues, and only refuses a caller it
+ * could not have served.
  */
+const flood = (count: number) =>
+  Promise.all(Array.from({ length: count }, (_, i) => attempt(`nobody-${i}-${Math.random()}@example.com`, "x".repeat(40))));
+
 describe("a flood of sign-ins for addresses that do not exist", () => {
-  it("is not all admitted to the password hasher at once", async () => {
-    const results = await Promise.all(
-      Array.from({ length: 24 }, (_, i) => attempt(`nobody-${i}@example.com`, "x".repeat(40))),
-    );
-    const statuses = results.map((r) => r.status);
-    const refused = statuses.filter((s) => s === 503);
-    expect(refused.length).toBeGreaterThan(0);
-    // Everything not refused was actually answered, not queued behind the pool.
-    expect(statuses.every((s) => s === 401 || s === 503)).toBe(true);
-    expect(statuses.filter((s) => s === 401).length).toBeLessThan(statuses.length);
-    expect(results.find((r) => r.status === 503)?.headers.get("Retry-After")).toBeTruthy();
+  it("is answered rather than refused, and not all admitted to the password hasher at once", async () => {
+    const fired = 12;
+    const statuses = (await flood(fired)).map((r) => r.status);
+    // Every one of them was checked and rejected; none was turned away because another was busy.
+    expect(statuses.every((s) => s === 401)).toBe(true);
+    // It is a queue rather than a lock — more than one hashes at a time — and it is bounded.
+    expect(hashing.peak).toBeGreaterThan(1);
+    expect(hashing.peak).toBeLessThan(fired);
   }, 30_000);
+
+  it("does not stop an account's own correct password getting in while it is running", async () => {
+    // The junk arrives first and fills the gate; the honest sign-in queues behind all of it.
+    const junk = flood(12);
+    const honest = await attempt(VICTIM, PASSWORD);
+    await junk;
+    expect(honest.status).toBe(200);
+    expect(jar.set).toHaveBeenCalled();
+  }, 30_000);
+
+  it("is refused, not held, once more are waiting than the queue can drain", async () => {
+    // Far more than the waiting room holds, so the surplus has to be turned away at once rather
+    // than parked on a socket apiece.
+    const results = await flood(60);
+    const statuses = results.map((r) => r.status);
+    expect(statuses.filter((s) => s === 503).length).toBeGreaterThan(0);
+    expect(statuses.every((s) => s === 401 || s === 503)).toBe(true);
+    expect(results.find((r) => r.status === 503)?.headers.get("Retry-After")).toBeTruthy();
+    // What was admitted was still bounded while all of that was in flight.
+    expect(hashing.peak).toBeLessThan(statuses.length);
+  }, 60_000);
 });
 
 /**

@@ -121,6 +121,70 @@ describe("what the stored ciphertext gives away about SESSION_SECRET", () => {
 });
 
 /**
+ * When the stretching is paid for.
+ *
+ * A stretched key costs a third of a second on the event loop, which is the point of it — but
+ * only once per secret per process, and the module's own rule is that a synchronous scrypt never
+ * lands on a request. Deriving every configured key and *then* asking which one the row names
+ * broke that: four retired secrets in PREVIOUS_SESSION_SECRETS, the configuration the README
+ * recommends after a leak, cost nearly a second of frozen server on the first decrypt of a row
+ * the current key opened.
+ */
+describe("what deriving the token key costs", () => {
+  it("is not paid for keys the ciphertext cannot have been written under", () => {
+    const stored = encrypt("an-access-token");
+    process.env.PREVIOUS_SESSION_SECRETS = Array.from(
+      { length: 4 },
+      (_, i) => `retired-secret-number-${i}-${Math.random()}`,
+    ).join(",");
+
+    // What one derivation costs on this machine, measured rather than assumed.
+    process.env.SESSION_SECRET = `unseen-secret-${Math.random()}`;
+    const startedOne = process.hrtime.bigint();
+    encrypt("x");
+    const oneDerivation = Number(process.hrtime.bigint() - startedOne) / 1e6;
+
+    process.env.SESSION_SECRET = ORIGINAL;
+    const started = process.hrtime.bigint();
+    expect(decrypt(stored)).toBe("an-access-token");
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    // The row names its key, so the id can be matched before any key is derived for it.
+    expect(ms).toBeLessThan(oneDerivation);
+  });
+
+  it("is paid at boot for every secret, not by the request that meets a row from an old one", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ds-kdf-"));
+    const retired = `retired-secret-${Math.random()}`;
+    try {
+      vi.resetModules();
+      process.env.DATA_DIR = dir;
+      process.env.SESSION_SECRET = retired;
+      delete process.env.PREVIOUS_SESSION_SECRETS;
+      const stored = (await import("@/lib/crypto")).encrypt("an-old-token");
+
+      // A restart with the secret rotated and the old one carried, sharing the same salt.
+      vi.resetModules();
+      process.env.SESSION_SECRET = `current-secret-${Math.random()}`;
+      process.env.PREVIOUS_SESSION_SECRETS = retired;
+      const after = await import("@/lib/crypto");
+      const startedBoot = process.hrtime.bigint();
+      after.prepareTokenKey();
+      const bootMs = Number(process.hrtime.bigint() - startedBoot) / 1e6;
+
+      const started = process.hrtime.bigint();
+      expect(after.decrypt(stored)).toBe("an-old-token");
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      // Boot paid for both keys, so the row that needs the retired one pays for nothing.
+      expect(ms).toBeLessThan(bootMs / 2);
+    } finally {
+      delete process.env.DATA_DIR;
+      vi.resetModules();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
  * Migrating what is already stored. A ciphertext written under the old derivation still opens —
  * otherwise upgrading would strand every existing connection — but it does not stay that way:
  * `lib/db.ts` re-keys it when the database is opened, and this is the part that does the work.

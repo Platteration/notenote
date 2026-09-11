@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { enabledProviderIds, getProvider, PROVIDERS } from "@/lib/providers";
 import { serviceFromScope } from "@/lib/providers/bluesky";
 import { demoItems } from "@/lib/providers/demo";
@@ -82,6 +84,24 @@ describe("names that exist on every object", () => {
     for (const name of inherited) expect(getProvider(name)).toBeNull();
   });
 
+  /**
+   * The case above passes even against a bare `PROVIDERS[id]`, because the enabled-id filter
+   * after the lookup rescues it: a function off `Object.prototype` has no `.id`, so
+   * `enabledProviderIds().includes(undefined)` is false whatever the lookup returned. That is a
+   * second line of defence, not the fix, and this is what the fix itself is for — a value
+   * reachable through the prototype that *would* survive the filter.
+   */
+  it("cannot be planted on the prototype and answered as a provider", () => {
+    const prototype = Object.prototype as unknown as Record<string, unknown>;
+    prototype.notaprovider = { ...PROVIDERS.tiktok, id: "tiktok" };
+    try {
+      expect(getProvider("notaprovider")).toBeNull();
+      expect(providerMeta("notaprovider")).toBeNull();
+    } finally {
+      delete prototype.notaprovider;
+    }
+  });
+
   it("have no platform metadata", () => {
     for (const name of inherited) {
       expect(providerMeta(name)).toBeNull();
@@ -98,5 +118,29 @@ describe("names that exist on every object", () => {
     }
     // A real one still reads as itself.
     expect(connectErrorText("denied")).toMatch(/cancelled/i);
+  });
+});
+
+/**
+ * The rule, not one instance of it: every read of these tables goes through the own-property
+ * helpers in `lib/providers`. `ScrollView` was left indexing `PROVIDER_META` directly three
+ * lines from a call to the function that closes it, where nothing here reached it — harmless
+ * only because the two fields it read are not on `Object.prototype`, which is not a property
+ * the next person to add `meta.name` there would keep.
+ */
+describe("the platform tables", () => {
+  const sources = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return sources(full);
+      return /\.tsx?$/.test(entry.name) ? [full] : [];
+    });
+
+  it("are only indexed where the own-property lookup lives", () => {
+    const owner = path.join("src", "lib", "providers", "meta.ts");
+    const offenders = sources("src")
+      .filter((file) => file !== owner)
+      .filter((file) => /PROVIDER_META\s*\[/.test(fs.readFileSync(file, "utf8")));
+    expect(offenders).toEqual([]);
   });
 });

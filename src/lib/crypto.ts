@@ -7,6 +7,12 @@ import { promisify } from "node:util";
  * scrypt is deliberately expensive — around 50-150ms per call. The synchronous form spends
  * that entirely on the event loop, freezing every other request in the process, so password
  * work always goes through the callback form, which runs on the threadpool.
+ *
+ * The token key below is the one deliberate exception, and it is one because of when it is
+ * paid rather than because it is cheap: it is derived once per configured secret per process,
+ * pre-paid at boot by `prepareTokenKey`, and it has to be usable from the synchronous paths
+ * that read and write rows. Nothing per-request and nothing per-sign-in may use the
+ * synchronous form.
  */
 const scryptAsync = promisify(crypto.scrypt) as (
   password: string,
@@ -63,7 +69,161 @@ const KDF = { N: 2 ** 15, r: 8, p: 1, maxmem: 96 * 1024 * 1024 } as const;
 const SALT_FILE = "token-key.salt";
 const SALT_BYTES = 16;
 
-let cachedSalt: Buffer | null = null;
+/**
+ * What the salt file says about itself, so that it can be *checked* rather than measured.
+ *
+ * The salt used to be stored as bare base64url and validated by decoding it and looking at the
+ * length, which is not a check at all: Node's base64url decoder silently skips everything
+ * outside the alphabet, so `# this used to be a salt, someone edited it by hand` decodes to 28
+ * bytes and passes. A file that has been edited, truncated or half-restored then reads as a
+ * *different* salt rather than as a damaged one — and a deployment that boots with a different
+ * salt cannot read any of the tokens the real one was protecting. The label and the checksum
+ * make the difference between "this is not the salt" and "this is a salt", which is the
+ * difference between a refusal and silent data loss.
+ */
+const SALT_LABEL = "daily-scroll-token-key-salt-v1";
+const SALT_NOTE = [
+  "# The Daily Scroll token key salt. Back this file up with the database: the provider tokens",
+  "# encrypted under it cannot be read without it. Do not edit it by hand.",
+].join("\n");
+
+function saltChecksum(salt: Buffer): string {
+  return crypto.createHash("sha256").update(SALT_LABEL).update(salt).digest("base64url").slice(0, 8);
+}
+
+function serialiseSalt(salt: Buffer): string {
+  return `${SALT_NOTE}\n${SALT_LABEL} ${salt.toString("base64url")} ${saltChecksum(salt)}\n`;
+}
+
+/** base64url and nothing else: `Buffer.from` on its own would drop whatever it did not like. */
+function decodeSalt(text: string): Buffer | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(text)) return null;
+  const salt = Buffer.from(text, "base64url");
+  return salt.length >= SALT_BYTES ? salt : null;
+}
+
+interface ParsedSalt {
+  salt: Buffer;
+  /** Whether the file it came from says what it is, or is the bare value an older build wrote. */
+  described: boolean;
+}
+
+/** The salt a file holds, or null when what it holds is not one. */
+function parseSalt(contents: string): ParsedSalt | null {
+  const lines = contents
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+  if (lines.length !== 1) return null;
+  const parts = lines[0]!.split(/\s+/);
+  // A salt written before the file described itself. Still a salt, and now strictly decoded.
+  if (parts.length === 1) {
+    const salt = decodeSalt(parts[0]!);
+    return salt ? { salt, described: false } : null;
+  }
+  if (parts.length !== 3 || parts[0] !== SALT_LABEL) return null;
+  const salt = decodeSalt(parts[1]!);
+  return salt && parts[2] === saltChecksum(salt) ? { salt, described: true } : null;
+}
+
+interface StoredSalt {
+  salt: Buffer;
+  /** Whether this process generated it rather than finding one. */
+  created: boolean;
+  file: string;
+}
+
+let cachedSalt: StoredSalt | null = null;
+
+function saltPath(): string {
+  const dir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
+  return path.join(dir, SALT_FILE);
+}
+
+/**
+ * The salt on disk, or null when there is none.
+ *
+ * A file that exists but cannot be read, and a file that exists and is not a salt, are two
+ * different operator problems and say so: both used to come out as "Could not write the token
+ * key salt", which sends someone to check directory permissions that are fine.
+ */
+function readSalt(file: string): ParsedSalt | null {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // No file here, or no directory to hold one: either way there is nothing to read, and the
+    // write below is what will say whether the place it should live is usable.
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw new Error(`Could not read the token key salt at ${file} (${code ?? (err as Error).message}).`);
+  }
+  const salt = parseSalt(contents);
+  if (!salt) {
+    throw new Error(
+      `The file at ${file} is not a token key salt (${contents.length} characters, no usable salt in them). ` +
+        "Nothing has been rewritten. Restore the file from backup, or move it aside to have a new salt written — " +
+        "the provider tokens encrypted under the old one cannot be read without it and those platforms have to be reconnected.",
+    );
+  }
+  return salt;
+}
+
+/**
+ * Write a new salt, completely, before anything can read it.
+ *
+ * `writeFileSync(..., { flag: "wx" })` is open-then-write: a second process starting at the same
+ * moment could see the name before the contents and refuse to boot over an empty file. Writing
+ * to a temporary name and linking it into place publishes a finished file in one step, and
+ * `link` still refuses a name that exists, so the loser of the race reads what the winner wrote.
+ */
+function writeSalt(file: string): Buffer {
+  const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(temporary, serialiseSalt(crypto.randomBytes(SALT_BYTES)), { mode: 0o600 });
+    try {
+      fs.linkSync(temporary, file);
+    } catch {
+      // A filesystem with no hard links: rename is still atomic, it just cannot refuse a name.
+      if (!fs.existsSync(file)) fs.renameSync(temporary, file);
+    }
+  } catch (err) {
+    throw new Error(`Could not write the token key salt to ${file} (${(err as NodeJS.ErrnoException).code ?? (err as Error).message}).`);
+  } finally {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      /* renamed into place, or never written */
+    }
+  }
+  // Whatever is on disk is what every later boot will read, so it is what this one uses too.
+  const stored = readSalt(file);
+  if (!stored) throw new Error(`Could not write the token key salt to ${file}`);
+  return stored.salt;
+}
+
+/**
+ * Rewrite a bare salt in the form that describes itself, keeping the same salt.
+ *
+ * Best effort and done once: the value does not change, so a file that cannot be rewritten is
+ * not a problem — it just keeps the older form, in which an edit to it reads as a different
+ * salt instead of being refused. Renaming a finished file over it means the file on disk is
+ * only ever one salt or the other, never half of one.
+ */
+function describeSaltFile(file: string, salt: Buffer): void {
+  const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+  try {
+    fs.writeFileSync(temporary, serialiseSalt(salt), { mode: 0o600 });
+    fs.renameSync(temporary, file);
+  } catch {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      /* never written */
+    }
+  }
+}
 
 /**
  * The salt the token key is stretched with.
@@ -72,35 +232,20 @@ let cachedSalt: Buffer | null = null;
  * against one install buys nothing against another and nothing can be pre-computed before the
  * install exists. It is also not recoverable: back it up with the database file, or the tokens
  * stretched under it have to be reconnected. `src/instrumentation.ts` derives the key at boot
- * so a DATA_DIR this cannot be written to says so there rather than mid-request.
+ * so a DATA_DIR this cannot be written to says so there rather than mid-request, and says so
+ * too when a new salt has just been generated beside a database that already existed.
  */
-function keySalt(): Buffer {
+function storedSalt(): StoredSalt {
   if (cachedSalt) return cachedSalt;
-  const dir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
-  const file = path.join(dir, SALT_FILE);
-  const read = (): Buffer | null => {
-    try {
-      const raw = Buffer.from(fs.readFileSync(file, "utf8").trim(), "base64url");
-      return raw.length >= SALT_BYTES ? raw : null;
-    } catch {
-      return null;
-    }
-  };
-  let salt = read();
-  if (!salt) {
-    salt = crypto.randomBytes(SALT_BYTES);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    try {
-      // `wx` so two processes starting at once cannot each write their own salt: the loser
-      // reads what the winner wrote.
-      fs.writeFileSync(file, `${salt.toString("base64url")}\n`, { mode: 0o600, flag: "wx" });
-    } catch {
-      salt = read();
-      if (!salt) throw new Error(`Could not write the token key salt to ${file}`);
-    }
-  }
-  cachedSalt = salt;
-  return salt;
+  const file = saltPath();
+  const existing = readSalt(file);
+  if (existing && !existing.described) describeSaltFile(file, existing.salt);
+  cachedSalt = existing ? { salt: existing.salt, created: false, file } : { salt: writeSalt(file), created: true, file };
+  return cachedSalt;
+}
+
+function keySalt(): Buffer {
+  return storedSalt().salt;
 }
 
 /** Stretching is expensive on purpose, so each distinct secret is derived once per process. */
@@ -115,9 +260,30 @@ function keyFrom(material: string): Buffer {
   return key;
 }
 
-/** Derive the current key now, so the cost and any DATA_DIR problem land at boot. */
-export function prepareTokenKey(): void {
-  currentKey();
+export interface TokenKeyState {
+  /** Where the salt lives, for a message that has to name it. */
+  saltFile: string;
+  /** Whether this process generated the salt rather than finding one already there. */
+  saltCreated: boolean;
+}
+
+/**
+ * Derive every key this deployment can decrypt with, so the cost and any DATA_DIR problem land
+ * at boot.
+ *
+ * Every configured secret, not just the current one: a stretched key costs a third of a second
+ * and `decrypt` cannot know in advance which one a stored row names, so a secret left out here
+ * is a secret paid for on the event loop by whichever request first meets a row that needs it.
+ */
+export function prepareTokenKey(): TokenKeyState {
+  for (const material of decryptionSecrets()) keyFrom(material);
+  return tokenKeyState();
+}
+
+/** Where the salt is and whether it was just made, resolving it but deriving nothing. */
+export function tokenKeyState(): TokenKeyState {
+  const { file, created } = storedSalt();
+  return { saltFile: file, saltCreated: created };
 }
 
 const KEY_ID_LABEL = "daily-scroll token key id";
@@ -157,9 +323,21 @@ function decryptionSecrets(): string[] {
   return [secret(), ...previousSecrets()];
 }
 
-/** Every key this deployment can decrypt with, newest first. */
-function decryptionKeys(): Buffer[] {
-  return decryptionSecrets().map(keyFrom);
+/**
+ * The stretched key a ciphertext names, or none.
+ *
+ * Derived one secret at a time and no further than the one that answers. Deriving every
+ * configured key and *then* filtering by the id — which is what this used to do — pays a KDF
+ * per retired secret for a row the current key opens: four secrets in PREVIOUS_SESSION_SECRETS,
+ * the documented recovery configuration after a leak, cost 942 ms of frozen event loop on the
+ * first decrypt.
+ */
+function stretchedKeyFor(id: string): Buffer[] {
+  for (const material of decryptionSecrets()) {
+    const key = keyFrom(material);
+    if (keyId(key) === id) return [key];
+  }
+  return [];
 }
 
 function legacyKeys(): Buffer[] {
@@ -212,11 +390,9 @@ export function decrypt(payload: string): string {
   if (parts.length === 4) {
     const [id, ivB, tagB, encB] = parts as [string, string, string, string];
     // Both derivations answer to a key id, so a row written before the key was stretched opens
-    // here as well as one written after it.
-    const keys = [
-      ...decryptionKeys().filter((k) => keyId(k) === id),
-      ...legacyKeys().filter((k) => legacyKeyId(k) === id),
-    ];
+    // here as well as one written after it. Each is matched on the id before the key it needs is
+    // derived, rather than after.
+    const keys = [...stretchedKeyFor(id), ...legacyKeys().filter((k) => legacyKeyId(k) === id)];
     if (keys.length === 0) throw new DecryptionError(NO_KEY);
     for (const key of keys) {
       try {
@@ -229,15 +405,24 @@ export function decrypt(payload: string): string {
   }
 
   // Written before ciphertexts named their key, and therefore before the key was stretched:
-  // try each key in turn.
+  // try each key in turn. There is no id to match on, so the cheap derivation is tried first and
+  // the stretched keys are derived one at a time rather than all of them before the first try.
   if (parts.length === 3) {
     const [ivB, tagB, encB] = parts as [string, string, string];
-    for (const key of [...legacyKeys(), ...decryptionKeys()]) {
+    const tryKey = (key: Buffer): string | null => {
       try {
         return open(key, ivB, tagB, encB);
       } catch {
-        /* try the next key */
+        return null;
       }
+    };
+    for (const key of legacyKeys()) {
+      const plain = tryKey(key);
+      if (plain !== null) return plain;
+    }
+    for (const material of decryptionSecrets()) {
+      const plain = tryKey(keyFrom(material));
+      if (plain !== null) return plain;
     }
     throw new DecryptionError(NO_KEY);
   }

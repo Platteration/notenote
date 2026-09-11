@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import nodeCrypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -101,5 +101,55 @@ describe("provider tokens written by an earlier version", () => {
       .slice(0, 8);
     expect(row.access_token.split(".")[0]).not.toBe(oldId);
     expect(row.refresh_token.split(".")[0]).not.toBe(oldId);
+  });
+});
+
+/**
+ * Opening the database is the one thing that must not fail on a transient problem: everything
+ * else in the app goes through it, so a write that cannot be made here is a 500 on the first
+ * request rather than a slow one. The migration is resumable by design — whatever it does not
+ * finish is still legacy next time — so it has to behave like it.
+ */
+describe("opening a database another process is also using", () => {
+  it("waits for a write lock rather than being told 'database is locked' at once", () => {
+    // node:sqlite leaves busy_timeout at 0, which is exactly that: no wait, an immediate throw.
+    const { timeout } = getDb().prepare("PRAGMA busy_timeout").get() as { timeout: number };
+    expect(timeout).toBeGreaterThan(0);
+  });
+
+  it("leaves a row it could not rewrite for the next start, instead of failing to open", () => {
+    const db = getDb();
+    db.prepare("INSERT OR IGNORE INTO users (id, email, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)").run(
+      "u2",
+      "locked@example.com",
+      "Locked",
+      "scrypt$x$y",
+      now(),
+    );
+    const stored = legacyCiphertext("a-token-that-cannot-be-rewritten");
+    db.prepare(
+      `INSERT INTO connections (user_id, provider, provider_user_id, display_name, access_token, refresh_token, expires_at, scope, demo, connected_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+    ).run("u2", "reddit", "p2", "Locked account", stored, null, null, null, now());
+    // Whatever the cause — another process holding the lock for longer than the timeout, a
+    // read-only file — the row's UPDATE fails and the open must survive it.
+    db.exec("CREATE TRIGGER refuse_connection_writes BEFORE UPDATE ON connections BEGIN SELECT RAISE(ABORT, 'locked'); END");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const row = reopen().prepare("SELECT access_token FROM connections WHERE user_id = ?").get("u2") as {
+        access_token: string;
+      };
+      expect(row.access_token).toBe(stored);
+      expect(warn.mock.calls.flat().join(" ")).toMatch(/leaving them for the next start/i);
+    } finally {
+      warn.mockRestore();
+      getDb().exec("DROP TRIGGER refuse_connection_writes");
+    }
+    // And the next start finishes the job.
+    const row = reopen().prepare("SELECT access_token FROM connections WHERE user_id = ?").get("u2") as {
+      access_token: string;
+    };
+    expect(row.access_token).not.toBe(stored);
+    expect(decrypt(row.access_token)).toBe("a-token-that-cannot-be-rewritten");
   });
 });

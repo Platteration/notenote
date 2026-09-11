@@ -68,7 +68,25 @@ export async function register(): Promise<void> {
   if (problems.length === 0) {
     try {
       const { prepareTokenKey } = await import("./lib/crypto");
-      prepareTokenKey();
+      const { databaseExists } = await import("./lib/db");
+      // Asked before the key is derived, because deriving it is what writes a salt file when
+      // there is none — and "a new salt beside a database that was already there" is the thing
+      // worth saying: it is a database restored without its salt, and every provider token in
+      // it has just become unreadable.
+      const hadDatabase = databaseExists();
+      const { saltCreated, saltFile } = prepareTokenKey();
+      if (saltCreated && hadDatabase) {
+        // Its own block rather than a line in the list below: this is not a configuration
+        // mistake, it is data that cannot be read, and the operator has a backup to restore.
+        console.warn(
+          [
+            "The Daily Scroll generated a new token key salt on this start, beside a database that already existed:",
+            `  - ${saltFile}`,
+            "  Provider tokens written under the previous salt cannot be read, and none have been re-keyed.",
+            "  Restore that file from your backup and restart, or have every connected platform reconnected.",
+          ].join("\n"),
+        );
+      }
     } catch (err) {
       problems.push(`Provider tokens cannot be encrypted: ${(err as Error).message}`);
     }

@@ -312,19 +312,34 @@ account-lockout weapon, because a stranger who knows an address can spend it on 
 and the owner's correct password is then refused too, with no password reset in this app to
 recover through. So the account-wide ceiling counts rather than refuses: past it a guess waits a
 second and only a wrong one is turned away, while the account's own correct password still gets
-in and empties the bucket. Credentials are never checked before the limits, because scrypt is
-deliberately expensive and that would turn sign-in into a CPU exhaustion vector. A successful
-sign-in also clears that account's bucket for that address, but not the shared per-address one:
+in and empties the bucket. Only so many of those waits are held at once, and the surplus skips
+the wait rather than being refused: a one-second hold on a connection the attacker chooses the
+number of is a cheaper thing to spend than the guessing it was meant to slow, and refusing at
+that point would be the lockout again. Credentials are never checked before the limits, because
+scrypt is deliberately expensive and that would turn sign-in into a CPU exhaustion vector. A
+successful sign-in also clears that account's bucket for that address, but not the shared
+per-address one:
 anyone with an account of their own could otherwise reset it between guesses at someone else's.
 
 Every one of those limits is keyed on something the caller picks, so a flood that varies the
 address on each request passes all of them and still pays for a scrypt each time — the decoy
 hash for an unknown account is what makes sign-in indistinguishable, and also what makes each
 flood request expensive. The number of passwords being verified at once is therefore bounded as
-well, and attempts past that are answered 503 rather than queued behind a four-thread pool with
-everyone else's requests. A concurrency ceiling rather than another rate limit, because a
-deployment-wide rate limit on sign-in would be exactly the lockout this section starts by
-avoiding: this one clears as the hashes finish.
+well, and that bound *queues*. Refusing at the ceiling instead was a wider version of the lockout
+this section starts by avoiding, and a cheaper one: nine connections of junk sign-ins, needing no
+account name and no address, refused fourteen of twenty correct passwords deployment-wide. So an
+attempt past the ceiling waits for a slot for up to four seconds, and is answered 503 only when
+the waiting room is full or that wait ran out. The waiting room is bounded in turn, because a
+queue nobody leaves is a socket and a buffered body per caller; it is sized so that a request
+admitted to it is normally served well inside the wait.
+
+The ceiling is the same for everyone on purpose. Keeping slots back for addresses that have an
+account would keep real sign-ins moving under a flood — and would also answer "is this address
+registered" differently while the gate is busy, which is the question the decoy hash spends a
+real scrypt per attempt not to answer. So the property this holds is narrower than "a correct
+password always gets in": guessing at an account from elsewhere cannot refuse that account's own
+password, while a flood aimed at the deployment slows sign-in for everybody and can refuse it
+while it lasts, clearing as the hashes finish rather than at the end of a fixed window.
 
 **Per-address limits need a reverse proxy.** A route handler cannot read the socket address, so
 the only client identity available is `X-Forwarded-For` — which is whatever the client typed
@@ -332,7 +347,11 @@ unless something trustworthy rewrote it. `TRUSTED_PROXY_HOPS` (default 0) says h
 do. At 0 the header is ignored and the address-keyed buckets are skipped entirely, leaving the
 account-wide sign-in ceiling and a deployment-wide sign-up ceiling — which is charged for an
 account that was created, not for a request that was made, or 200 posts of `{}` would close
-registration for everybody for an hour at a cost of about 5 KB. The
+registration for everybody for an hour at a cost of about 5 KB. "Charged for the account" still
+means charged on the way in and refunded when nothing came of the request: reading the bucket on
+the way in and charging it after the password hash puts the decision and the charge on opposite
+sides of an await, and 260 concurrent sign-ups then created 260 accounts against a ceiling of
+200. The
 two failure modes this avoids are mirror images: trusting the header from a direct client gives
 everyone a private bucket per request, and falling back to a shared constant gives an
 unauthenticated stranger a deployment-wide sign-in lockout for twenty wrong passwords. Set
@@ -439,6 +458,24 @@ another, and the key id is an HMAC under the key rather than a hash of it. Token
 earlier version still open, and are re-keyed in place the first time this version opens the
 database. **Back the salt file up with the database**: without it, tokens encrypted under it
 have to be reconnected.
+
+The salt file says what it is — a label and a checksum — so a file that has been edited,
+truncated or half-restored is refused rather than read as a *different* salt. Decoding it and
+measuring the result, which is what it used to do, is not a check at all: base64url decoding
+skips every character outside its alphabet, so a hand-edited file decoded to a perfectly good
+salt that was not the original one. A start that generates a new salt beside a database that
+already existed says so on the console and re-keys nothing, because rewriting a stored token
+under a key derived from the wrong salt is the one step here that cannot be undone — the row
+stops being legacy, so putting the real salt back afterwards no longer recovers it.
+
+**Take a copy of the database, and of the salt, before upgrading to this build.** The re-key runs
+by itself the first time this version opens the database, it logs one line saying how many
+connections it rewrote, and it is one-way: a build from before it cannot read what has been
+rewritten. What such a build reports is `This value was encrypted with a key this deployment no
+longer has. Restore the old SESSION_SECRET in PREVIOUS_SESSION_SECRETS, or reconnect the
+platform.` — which is misleading here, because `SESSION_SECRET` is the one thing that is not
+wrong. The way out of a rollback is to roll forward again, or to restore the copy of the database
+taken before the upgrade.
 
 A push endpoint is a URL the client chooses and the server POSTs to every day, which makes it
 the second destination in the app a user picks; it goes through the same network guard as a

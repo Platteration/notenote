@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearRateLimit, clientKey, peekRateLimit, rateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
+import { clearRateLimit, clientKey, rateLimit, refundRateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
 
 beforeEach(() => resetAllRateLimits());
 
@@ -26,16 +26,24 @@ describe("rate limit", () => {
     expect(rateLimit("k", 3, 60_000, T0 + 60_001).ok).toBe(true);
   });
 
-  it("can be read without spending an attempt", () => {
-    // What a bucket charged for work done rather than for a request made needs: sign-up peeks
-    // on the way in and charges on the way out.
-    expect(peekRateLimit("k", 3, T0).remaining).toBe(3);
-    rateLimit("k", 3, 60_000, T0);
-    expect(peekRateLimit("k", 3, T0).remaining).toBe(2);
-    expect(peekRateLimit("k", 3, T0).remaining).toBe(2);
-    for (let i = 0; i < 2; i++) rateLimit("k", 3, 60_000, T0);
-    expect(peekRateLimit("k", 3, T0).ok).toBe(false);
-    expect(peekRateLimit("k", 3, T0 + 60_001).ok).toBe(true);
+  it("gives an attempt back when the request it was charged for did nothing", () => {
+    // What a bucket charged for work done rather than for a request made needs: sign-up
+    // reserves a place on the way in and hands it back when no account came of the request.
+    for (let i = 0; i < 3; i++) expect(rateLimit("k", 3, 60_000, T0).ok).toBe(true);
+    expect(rateLimit("k", 3, 60_000, T0).ok).toBe(false);
+    // Four requests were charged, the refused one included, and none of them created anything.
+    for (let i = 0; i < 4; i++) refundRateLimit("k", T0);
+    for (let i = 0; i < 3; i++) expect(rateLimit("k", 3, 60_000, T0).ok).toBe(true);
+    expect(rateLimit("k", 3, 60_000, T0).ok).toBe(false);
+  });
+
+  it("cannot be refunded below nothing, or into a window that has already reset", () => {
+    for (let i = 0; i < 5; i++) refundRateLimit("k", T0);
+    for (let i = 0; i < 3; i++) expect(rateLimit("k", 3, 60_000, T0).ok).toBe(true);
+    expect(rateLimit("k", 3, 60_000, T0).ok).toBe(false);
+    // A refund arriving after the window turned over belongs to a bucket that no longer exists.
+    refundRateLimit("k", T0 + 60_001);
+    expect(rateLimit("k", 3, 60_000, T0).ok).toBe(false);
   });
 
   it("keeps separate keys independent", () => {

@@ -46,18 +46,21 @@ export function rateLimit(key: string, limit: number, windowMs: number, now: num
 }
 
 /**
- * Whether `key` is already at its limit, without spending an attempt.
+ * Give an attempt back, for a request that turned out to do nothing.
  *
- * For a bucket that should be charged for what a request *did* rather than for having been
- * made: peek on the way in, charge on the way out. A deployment-wide ceiling charged on the way
- * in is a ceiling anyone can spend on requests that do nothing.
+ * This is how a bucket is charged for what a request *achieved* rather than for having been
+ * made, and the charge still has to happen on the way *in*. Reading the bucket on the way in and
+ * charging it on the way out looks equivalent and is not: the two are separated by an await, so
+ * every request that arrives while the first is hashing reads the same unspent bucket and the
+ * ceiling holds only for strictly sequential traffic — 260 concurrent sign-ups created 260
+ * accounts against a ceiling of 200. Charging on entry reserves the place; refunding releases it
+ * when nothing came of the request, within the same window.
  */
-export function peekRateLimit(key: string, limit: number, now: number = Date.now()): RateLimitResult {
+export function refundRateLimit(key: string, now: number = Date.now()): void {
   const bucket = buckets.get(key);
-  if (!bucket || bucket.resetAt <= now) return { ok: true, remaining: limit, retryAfter: 0 };
-  const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
-  if (bucket.count >= limit) return { ok: false, remaining: 0, retryAfter };
-  return { ok: true, remaining: limit - bucket.count, retryAfter };
+  // A window that has already reset owes nothing: the attempt being refunded is not in it.
+  if (!bucket || bucket.resetAt <= now) return;
+  bucket.count = Math.max(0, bucket.count - 1);
 }
 
 /** Forget a key, e.g. after a successful sign-in, so one bad guess doesn't linger. */

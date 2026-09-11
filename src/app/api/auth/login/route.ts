@@ -3,6 +3,7 @@ import { assertSameSite, errorResponse, json, readJson } from "@/lib/api";
 import { UserFacingError } from "@/lib/errors";
 import { clearRateLimit, clientKey, rateLimit, type RateLimitResult } from "@/lib/rate-limit";
 import { createSession } from "@/lib/session";
+import { WorkGate } from "@/lib/work-gate";
 
 /**
  * Throttling password guesses without handing anyone an account-lockout weapon.
@@ -12,8 +13,10 @@ import { createSession } from "@/lib/session";
  * password is then answered 429 as well — and with no password reset anywhere in this app, for
  * as long as the stranger keeps topping the bucket up. So the strict limit is keyed on the
  * account *and* the address, and the account-wide ceiling is *counted* rather than enforced:
- * past it a guess waits a second and only a wrong one is turned away. A correct password always
- * gets in, and clears the count.
+ * past it a guess waits a second and only a wrong one is turned away. Guessing at an account
+ * from somewhere else therefore cannot refuse that account's own correct password, which does
+ * get in and clears the count. (The stricter account-and-address bucket does refuse, and that
+ * is the trade it makes: it can only be spent by someone the address is shared with.)
  *
  * The address is only known when a trusted proxy supplies it (TRUSTED_PROXY_HOPS); without one
  * the account-wide ceiling and the concurrency ceiling below are what is left.
@@ -29,7 +32,21 @@ const PER_ACCOUNT = { limit: 100, windowMs: 15 * 60_000 };
 const OVER_CEILING_DELAY_MS = 1_000;
 
 /**
- * How many passwords may be verified at once.
+ * How many of those delays may be running at once.
+ *
+ * The delay costs the server a held socket and the body the framework has already buffered, and
+ * an attacker chooses how many it is paying for: fill one account's ceiling and every later
+ * request for that address is held for a second, which turns the cheapest refusal in the app
+ * into a slowloris amplifier. Past this many, the delay is *skipped* rather than the request
+ * refused — refusing here would be the account lockout this route exists to avoid, and the
+ * delay was never the bound: it is friction on a serial guesser, and the gate below is what
+ * actually limits the work.
+ */
+const MAX_DELAYED_GUESSES = 16;
+let delayedGuesses = 0;
+
+/**
+ * How many passwords may be verified at once, and what happens to the rest.
  *
  * Every attempt pays for a scrypt whether or not the account exists — the decoy hash is the
  * point — and scrypt runs on libuv's threadpool, which Node sizes at four threads. Every limit
@@ -37,12 +54,34 @@ const OVER_CEILING_DELAY_MS = 1_000;
  * it can invent afresh on every request. A flood of unknown addresses therefore passes all of
  * them and leaves the threadpool as the only queue, with every other request in this process
  * waiting behind it — measured at 400 concurrent attempts, 50 KB of bodies, taking an ordinary
- * feed read from 10 ms to 1.7 s. A ceiling on how many run at once bounds that, and unlike a
- * deployment-wide rate limit it is not a lockout of its own: it clears as the hashes finish
- * rather than at the end of a fixed window.
+ * feed read from 10 ms to 1.7 s.
+ *
+ * A ceiling that *refused* past that point was worse than the problem: nine connections of junk
+ * sign-ins refused fourteen of twenty correct passwords, from every account at once, with no
+ * address or account name needed, on an app with no password reset to recover through. So the
+ * ceiling queues, and a request is only refused when it could not have been served: the waiting
+ * room is sized against how fast the queue drains, which is between ten and thirty verifications
+ * a second on the machines this has been measured on, so a full room of thirty-two clears inside
+ * the wait below rather than piling up against the end of it.
+ *
+ * Neither number can simply be raised. Every waiting request is a socket and a body the
+ * framework has already buffered, so the waiting room is the bound on what a flood can make this
+ * process hold; past it, refusing costs nothing and holding costs everything.
+ *
+ * The ceiling is deliberately symmetric. Reserving slots for addresses that have an account
+ * would keep real sign-ins moving under a flood, and would also answer "does this address have
+ * an account" differently while the gate is busy — the question the decoy hash spends a real
+ * scrypt per attempt to refuse to answer.
  */
 const MAX_CONCURRENT_VERIFICATIONS = 8;
-let verifying = 0;
+const MAX_WAITING_VERIFICATIONS = 32;
+const VERIFICATION_WAIT_MS = 4_000;
+
+const verifications = new WorkGate({
+  slots: MAX_CONCURRENT_VERIFICATIONS,
+  waiting: MAX_WAITING_VERIFICATIONS,
+  waitMs: VERIFICATION_WAIT_MS,
+});
 
 function tooMany(results: RateLimitResult[]): Response | null {
   const blocked = results.filter((c) => !c.ok);
@@ -55,6 +94,14 @@ function refuse(retryAfter: number): Response {
   return json(
     { error: "Too many sign-in attempts. Try again shortly." },
     { status: 429, headers: { "Retry-After": String(retryAfter) } },
+  );
+}
+
+/** Nothing is wrong with the request or the credentials: this server is busy. */
+function busy(): Response {
+  return json(
+    { error: "The server is busy checking sign-ins. Try again in a moment." },
+    { status: 503, headers: { "Retry-After": String(Math.ceil(VERIFICATION_WAIT_MS / 1000)) } },
   );
 }
 
@@ -89,18 +136,21 @@ export async function POST(req: Request) {
 
     const overCeiling = ceiling !== null && !ceiling.ok;
     // Slow rather than refuse: this is the account someone else can name, so the wait is the
-    // only part of the ceiling the owner can be made to pay.
-    if (overCeiling) await new Promise((resolve) => setTimeout(resolve, OVER_CEILING_DELAY_MS));
-
-    if (verifying >= MAX_CONCURRENT_VERIFICATIONS) {
-      return json(
-        { error: "Too many sign-in attempts. Try again shortly." },
-        { status: 503, headers: { "Retry-After": "2" } },
-      );
+    // only part of the ceiling the owner can be made to pay. Only so many of these are held at
+    // once; see MAX_DELAYED_GUESSES.
+    if (overCeiling && delayedGuesses < MAX_DELAYED_GUESSES) {
+      delayedGuesses++;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, OVER_CEILING_DELAY_MS));
+      } finally {
+        delayedGuesses--;
+      }
     }
 
+    const slot = await verifications.acquire();
+    if (!slot) return busy();
+
     let user;
-    verifying++;
     try {
       user = await signIn(email, body.password ?? "");
     } catch (err) {
@@ -109,7 +159,7 @@ export async function POST(req: Request) {
       if (overCeiling && err instanceof UserFacingError) return refuse(ceiling?.retryAfter ?? 0);
       throw err;
     } finally {
-      verifying--;
+      slot();
     }
 
     // A correct password clears this account's buckets, so a burst of typos doesn't linger and

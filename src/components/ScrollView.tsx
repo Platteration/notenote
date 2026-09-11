@@ -8,8 +8,8 @@ import { PlatformLogo } from "./PlatformLogo";
 import { chime, haptic, scrollBehavior } from "@/lib/effects";
 import type { FeedPayload } from "@/lib/feed";
 import { openInNativeApp } from "@/lib/open-native";
-import { PROVIDER_META, providerName } from "@/lib/providers/meta";
-import type { MediaItem, ProviderId } from "@/lib/providers/types";
+import { providerMeta, providerName } from "@/lib/providers/meta";
+import type { MediaItem } from "@/lib/providers/types";
 import type { Prefs } from "@/lib/settings";
 
 function compact(n: number | undefined): string {
@@ -71,7 +71,9 @@ function Slide({
   }, [item.key, onVisible]);
 
   const name = providerName(item.provider);
-  const meta = PROVIDER_META[item.provider as ProviderId];
+  // Through the own-property lookup like every other read of this table: the id is a value off
+  // a stored row, and a bare index answers every name on Object.prototype with something truthy.
+  const meta = providerMeta(item.provider);
   const brand = meta?.color ?? "#333";
   const brandWire = meta?.wireColor ?? "#ffffff";
   const open = (e: React.MouseEvent | React.KeyboardEvent) => {
