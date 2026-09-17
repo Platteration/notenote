@@ -34,7 +34,7 @@ function formatLocal(ms: number, timezone: string): string {
 
 export function LockedView({ initial, prefs }: { initial: LockedPayload; prefs: Prefs }) {
   const router = useRouter();
-  const [state] = useState(initial);
+  const state = initial;
   const win = state.window;
   const onZero = useCallback(() => {
     chime(prefs, "open");

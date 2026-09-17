@@ -6,6 +6,7 @@ import { curate, type CurationReason } from "./curation";
 import { getDb, now, type DailyFeedRow } from "./db";
 import type { MediaItem } from "./providers/types";
 import { mutedSet, savedKeys, streakFor, type Streak } from "./library";
+import { enabledProviderIds } from "./providers";
 import { getSettings } from "./settings";
 import { computeWindow, type DailyWindow } from "./window";
 
@@ -17,6 +18,7 @@ export interface FeedPayload {
   items: MediaItem[];
   seenKeys: string[];
   savedKeys: string[];
+  mutedCreators: string[];
   sources: Array<{ provider: string; count: number; error: string | null }>;
   /**
    * Why each clip was chosen, keyed by item key. Empty for feeds frozen before this was
@@ -49,12 +51,14 @@ export function windowFor(userId: string, at: number = now()): DailyWindow {
 }
 
 export async function getFeed(userId: string, at: number = now()): Promise<FeedPayload | LockedPayload> {
+  const started = now();
   const settings = getSettings(userId);
   const win = computeWindow(at, settings.timezone, settings.windowStart);
   const db = getDb();
 
   if (!win.isOpen) {
-    const connectedCount = (db.prepare("SELECT COUNT(*) AS c FROM connections WHERE user_id = ?").get(userId) as { c: number }).c;
+    const enabled = new Set<string>(enabledProviderIds());
+    const connectedCount = (db.prepare("SELECT provider FROM connections WHERE user_id = ?").all(userId) as Array<{ provider: string }>).filter((r) => enabled.has(r.provider)).length;
     return {
       status: "locked",
       window: win,
@@ -74,7 +78,7 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
   let sources: FeedPayload["sources"];
   let reasons: Record<string, CurationReason>;
 
-  if (existing) {
+  if (existing && (JSON.parse(existing.items_json) as { items: MediaItem[] }).items.length > 0) {
     const parsed = JSON.parse(existing.items_json) as {
       items: MediaItem[];
       sources: FeedPayload["sources"];
@@ -100,11 +104,30 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
     reasons = curated.reasons;
     sources = results.map((r) => ({ provider: r.provider, count: curated.stats.perProvider[r.provider] ?? 0, error: r.error }));
     generatedAt = at;
-    db.prepare(
+    // Only freeze a useful feed. A first visit before connecting, or a temporary
+    // provider outage, must not prevent recovery for the rest of the day.
+    if (items.length > 0) db.prepare(
       `INSERT INTO daily_feeds (user_id, day_key, items_json, generated_at, opens_at, closes_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, day_key) DO NOTHING`,
+       ON CONFLICT(user_id, day_key) DO UPDATE SET items_json = excluded.items_json,
+         generated_at = excluded.generated_at, opens_at = excluded.opens_at, closes_at = excluded.closes_at
+       WHERE json_array_length(daily_feeds.items_json, '$.items') = 0`,
     ).run(userId, win.dayKey, JSON.stringify({ items, sources, reasons }), generatedAt, win.opensAt, win.closesAt);
+    // Concurrent first requests must return the same winner that was persisted.
+    const winner = db.prepare("SELECT * FROM daily_feeds WHERE user_id = ? AND day_key = ?").get(userId, win.dayKey) as DailyFeedRow | undefined;
+    if (winner) {
+      const frozen = JSON.parse(winner.items_json) as { items: MediaItem[]; sources: FeedPayload["sources"]; reasons?: Record<string, CurationReason> };
+      items = frozen.items;
+      sources = frozen.sources;
+      reasons = frozen.reasons ?? {};
+      generatedAt = winner.generated_at;
+    }
   }
+
+  // Recheck after provider I/O: a request started before closing may finish after it.
+  const finishedAt = at + Math.max(0, now() - started);
+  const currentWindow = windowFor(userId, finishedAt);
+  if (!currentWindow.isOpen || currentWindow.dayKey !== win.dayKey) return getFeed(userId, finishedAt);
+  db.prepare("INSERT OR IGNORE INTO scroll_visits (user_id, day_key) VALUES (?, ?)").run(userId, win.dayKey);
 
   const seenToday = (
     db
@@ -114,12 +137,13 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
 
   return {
     status: "open",
-    window: win,
+    window: currentWindow,
     dayKey: win.dayKey,
     generatedAt,
     items,
     seenKeys: seenToday,
     savedKeys: savedKeys(userId),
+    mutedCreators: [...mutedSet(userId)],
     sources,
     reasons,
   };
@@ -195,6 +219,7 @@ export interface PurgeCounts {
  */
 export function purgeExpired(at: number = now()): PurgeCounts {
   const db = getDb();
+  db.exec("INSERT OR IGNORE INTO scroll_visits (user_id, day_key) SELECT user_id, day_key FROM daily_feeds");
   const feeds = db.prepare("DELETE FROM daily_feeds WHERE closes_at < ?").run(at - 86_400_000);
   const sessions = db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(at);
   const states = db.prepare("DELETE FROM oauth_states WHERE created_at < ?").run(at - 15 * 60 * 1000);

@@ -14,6 +14,7 @@ export const GET = withUser(async (_req, user) => {
     exportedAt: new Date().toISOString(),
     account: { id: user.id, email: user.email, displayName: user.display_name, createdAt: new Date(user.created_at).toISOString() },
     settings: getSettings(user.id),
+    scrollVisits: rows<Record<string, unknown>>("SELECT day_key FROM scroll_visits WHERE user_id = ? ORDER BY day_key"),
     connections: rows<Record<string, unknown>>(
       "SELECT provider, provider_user_id, display_name, demo, connected_at FROM connections WHERE user_id = ?",
     ),

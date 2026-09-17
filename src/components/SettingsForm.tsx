@@ -6,6 +6,7 @@ import { Countdown } from "./Countdown";
 import { NotificationSetting } from "./NotificationSetting";
 import { SecurityPanel } from "./SecurityPanel";
 import { chime, haptic } from "@/lib/effects";
+import { requestJson } from "@/lib/client-api";
 import type { Prefs, Settings } from "@/lib/settings";
 import { THEME_LABELS, THEME_NOTES, THEMES } from "@/lib/theme";
 import type { DailyWindow } from "@/lib/window";
@@ -62,6 +63,8 @@ export function SettingsForm({
   const [win, setWin] = useState(initialWindow);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [prefsBusy, setPrefsBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -73,6 +76,15 @@ export function SettingsForm({
 
   /** Preferences save immediately and apply to the live page, so the change is visible. */
   async function updatePrefs(patch: Partial<Prefs>) {
+    if (prefsBusy) return;
+    setPrefsBusy(true);
+    setMsg(null);
+    try {
+    await requestJson("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefs: patch }),
+    });
     const next = { ...prefs, ...patch };
     setPrefs(next);
     const root = document.documentElement;
@@ -86,46 +98,41 @@ export function SettingsForm({
     }
     if (patch.haptics) haptic(next, 12);
     if (patch.sound) chime(next, "open");
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prefs: patch }),
-    });
+    } catch (err) {
+      setMsg({ kind: "err", text: (err as Error).message });
+    } finally { setPrefsBusy(false); }
   }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const res = await fetch("/api/settings", {
+    try {
+    const body = await requestJson<{ window: DailyWindow }>("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ timezone, windowStart, feedSize }),
     });
-    const body = (await res.json()) as { error?: string; window?: DailyWindow };
-    setBusy(false);
-    if (!res.ok) {
-      setMsg({ kind: "err", text: body.error ?? "Could not save" });
-      return;
-    }
     if (body.window) setWin(body.window);
     setMsg({ kind: "ok", text: "Saved." });
+    router.refresh();
+    } catch (err) { setMsg({ kind: "err", text: (err as Error).message }); }
+    finally { setBusy(false); }
   }
 
   async function deleteAccount() {
     setDeleteError(null);
-    const res = await fetch("/api/account", {
+    setDeleting(true);
+    try {
+    await requestJson("/api/account", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirm: confirmEmail }),
     });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setDeleteError(body.error ?? "Could not delete the account");
-      return;
-    }
     router.push("/");
     router.refresh();
+    } catch (err) { setDeleteError((err as Error).message); }
+    finally { setDeleting(false); }
   }
 
   return (
@@ -239,8 +246,8 @@ export function SettingsForm({
             </div>
             {deleteError && <p className="error">{deleteError}</p>}
             <div className="cred-actions">
-              <button className="btn btn-danger btn-sm" type="button" onClick={deleteAccount} disabled={confirmEmail !== email}>
-                Permanently delete
+              <button className="btn btn-danger btn-sm" type="button" onClick={deleteAccount} disabled={deleting || confirmEmail !== email}>
+                {deleting ? "Deleting…" : "Permanently delete"}
               </button>
               <button className="btn btn-ghost btn-sm" type="button" onClick={() => setDeleteOpen(false)}>
                 Cancel

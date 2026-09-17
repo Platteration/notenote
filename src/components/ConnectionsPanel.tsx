@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { requestJson } from "@/lib/client-api";
 import { Countdown } from "./Countdown";
 import { PlatformLogo } from "./PlatformLogo";
 import type { ConnectionSummary } from "@/lib/connections";
@@ -34,18 +35,18 @@ function CredentialForm({
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const res = await fetch(`/api/connect/${connection.provider}/credentials`, {
+    try {
+    const body = await requestJson<{ connections: ConnectionSummary[] }>(`/api/connect/${connection.provider}/credentials`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(values),
     });
-    const body = (await res.json().catch(() => ({}))) as { error?: string; connections?: ConnectionSummary[] };
-    setBusy(false);
-    if (!res.ok || !body.connections) {
-      setError(body.error ?? "Could not connect");
-      return;
-    }
     onConnected(body.connections);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -85,27 +86,39 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
   const [busy, setBusy] = useState<string | null>(null);
   const [openForm, setOpenForm] = useState<string | null>(params.get("form"));
   const [justConnected, setJustConnected] = useState<string | null>(params.get("connected"));
+  const [error, setError] = useState<string | null>(null);
 
   const errorParam = params.get("error");
-  const errorText = errorParam ? ERRORS[errorParam.replace(/^[a-z]+-/, "")] ?? "Something went wrong." : null;
+  const errorText = errorParam ? ERRORS[errorParam] ?? ERRORS[errorParam.replace(/^[a-z]+-/, "")] ?? "Something went wrong." : null;
 
   async function disconnect(provider: string) {
     setBusy(provider);
-    const res = await fetch(`/api/connect/${provider}`, { method: "DELETE" });
-    if (res.ok) setConnections(((await res.json()) as { connections: ConnectionSummary[] }).connections);
-    setBusy(null);
+    setError(null);
+    try {
+      const body = await requestJson<{ connections: ConnectionSummary[] }>(`/api/connect/${provider}`, { method: "DELETE" });
+      setConnections(body.connections);
+      setJustConnected(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
   /** Demo connections are created with a POST, never a link — see the route for why. */
   async function connectDemo(provider: string) {
     setBusy(provider);
-    const res = await fetch(`/api/connect/${provider}`, { method: "POST" });
-    if (res.ok) {
-      setConnections(((await res.json()) as { connections: ConnectionSummary[] }).connections);
+    setError(null);
+    try {
+      const body = await requestJson<{ connections: ConnectionSummary[] }>(`/api/connect/${provider}`, { method: "POST" });
+      setConnections(body.connections);
       setJustConnected(provider);
       setOpenForm(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
     }
-    setBusy(null);
   }
 
   const connectedCount = connections.filter((c) => c.connected).length;
@@ -120,6 +133,7 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
         </p>
       )}
       {errorText && <p className="error">{errorText}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
 
       <div className="card" style={{ marginBottom: 14 }}>
         <h2>{win.isOpen ? "The scroll is open" : "Next scroll"}</h2>
@@ -201,9 +215,8 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
       ))}
 
       <p className="footer-note">
-        Demo connections serve a generated catalogue that changes daily. Set the platform&apos;s client ID and secret in
-        the server environment to switch it to a real OAuth connection. Operators can limit which platforms appear
-        with the <code>ENABLED_PROVIDERS</code> setting.
+        Demo connections show sample clips so you can explore the app. Connect a live account to see content from your
+        platforms. Each platform determines which videos it makes available.
       </p>
     </>
   );

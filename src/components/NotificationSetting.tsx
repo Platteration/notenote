@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { requestJson } from "@/lib/client-api";
 
 /** base64url VAPID key → the Uint8Array the PushManager expects. */
 function urlBase64ToUint8Array(base64: string): Uint8Array {
@@ -11,7 +12,7 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   return out;
 }
 
-type State = "loading" | "unsupported" | "unconfigured" | "off" | "on" | "blocked";
+type State = "loading" | "unsupported" | "unconfigured" | "off" | "on" | "blocked" | "error";
 
 export function NotificationSetting() {
   const [state, setState] = useState<State>("loading");
@@ -23,8 +24,8 @@ export function NotificationSetting() {
     const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
     // Every state update happens after an await, so the effect never sets state
     // synchronously and trigger a cascading render.
-    const res = await fetch("/api/push/key");
-    const { configured } = (await res.json()) as { configured: boolean };
+    try {
+    const { configured } = await requestJson<{ configured: boolean }>("/api/push/key");
     if (!supported) {
       setState("unsupported");
       return;
@@ -39,7 +40,13 @@ export function NotificationSetting() {
     }
     const reg = await navigator.serviceWorker.getRegistration();
     const sub = reg ? await reg.pushManager.getSubscription() : null;
-    setState(sub ? "on" : "off");
+    const { subscriptions } = await requestJson<{ subscriptions: Array<{ endpoint: string }> }>("/api/push/subscribe");
+    setState(sub && subscriptions.some((s) => s.endpoint === sub.endpoint) ? "on" : "off");
+    setError(null);
+    } catch (err) {
+      setState("error");
+      setError((err as Error).message);
+    }
   }, []);
 
   useEffect(() => {
@@ -62,7 +69,7 @@ export function NotificationSetting() {
       }
       const reg = await navigator.serviceWorker.register("/sw.js");
       await navigator.serviceWorker.ready;
-      const { publicKey } = (await (await fetch("/api/push/key")).json()) as { publicKey: string | null };
+      const { publicKey } = await requestJson<{ publicKey: string | null }>("/api/push/key");
       if (!publicKey) throw new Error("This server has no push keys configured");
       const sub =
         (await reg.pushManager.getSubscription()) ??
@@ -70,12 +77,11 @@ export function NotificationSetting() {
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
         }));
-      const res = await fetch("/api/push/subscribe", {
+      await requestJson("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscription: sub.toJSON() }),
       });
-      if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? "Could not subscribe");
       setState("on");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not turn notifications on");
@@ -91,7 +97,7 @@ export function NotificationSetting() {
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = reg ? await reg.pushManager.getSubscription() : null;
       if (sub) {
-        await fetch(`/api/push/subscribe?endpoint=${encodeURIComponent(sub.endpoint)}`, { method: "DELETE" });
+        await requestJson(`/api/push/subscribe?endpoint=${encodeURIComponent(sub.endpoint)}`, { method: "DELETE" });
         await sub.unsubscribe();
       }
       setState("off");
@@ -104,6 +110,7 @@ export function NotificationSetting() {
 
   const description: Record<State, string> = {
     loading: "Checking this device…",
+    error: "Could not check notifications.",
     unsupported: "This browser doesn't support web push. Try installing the app to your home screen.",
     unconfigured: "The server has no push keys configured, so notifications are unavailable here.",
     off: "One notification a day, when your hour opens. Nothing else, ever.",
@@ -118,6 +125,7 @@ export function NotificationSetting() {
         <span>{description[state]}</span>
         {error && <span style={{ color: "var(--danger)" }}>{error}</span>}
       </span>
+      {state === "error" && <button className="btn btn-sm" type="button" onClick={() => void refresh()}>Retry</button>}
       {(state === "on" || state === "off") && (
         <button
           type="button"
