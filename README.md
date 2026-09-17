@@ -12,8 +12,8 @@ countdown.
 ## Quick start
 
 ```bash
-npm install
-cp .env.example .env      # optional: add platform credentials
+npm ci
+npm run setup             # creates .env with a random secret; keeps an existing .env
 npm run dev               # http://localhost:3000
 ```
 
@@ -39,7 +39,8 @@ connect  ->  fetch  ->  curate  ->  freeze for the day  ->  open for 60 min  -> 
    deduplicated, each creator is capped, and platforms are interleaved round-robin with no
    platform allowed more than half the feed. A seed of `userId:dayKey` makes the order
    deterministic for the whole hour.
-4. **Freeze.** The first request inside the window builds the feed and stores it for the day.
+4. **Freeze.** The first nonempty feed inside the window is stored for the day. Empty feeds can
+   recover after connecting a platform or retrying an outage. Concurrent requests return the same stored feed.
 5. **Open for an hour** (`src/lib/window.ts`). Timezone-aware, DST-safe, and a window that
    crosses local midnight stays open until its minute is up. When the clock runs out the
    client shows "Time's up" mid-swipe.
@@ -73,6 +74,12 @@ Register `{APP_BASE_URL}/api/connect/<provider>/callback` as the redirect URI on
 developer portal. Any platform left unconfigured serves a deterministic, daily-changing demo
 catalogue so the whole product can be explored without keys. Operators can restrict which
 platforms appear at all with `ENABLED_PROVIDERS=youtube,reddit,...` (default: all).
+
+Demo clips are generated posters and sample metadata, not playable videos or real social posts.
+They are labelled **Demo** in the scroll and saved shelf; opening a nonexistent post is disabled.
+Live OAuth flows need your platform's credentials and approvals and must be verified with your
+account. Direct playback depends on the source exposing a video URL; other live clips open on
+their source platform. Web Push additionally requires VAPID keys, browser permission, and the notify job.
 
 ### Opening clips in the native app
 
@@ -189,6 +196,10 @@ The locked screen shows a streak of consecutive days you turned up for your hour
 hour is fixed, it rewards the ritual rather than the volume — there is no way to inflate it by
 watching more.
 
+Visit dates are stored separately from expiring feeds, so cleanup does not erase streaks.
+Existing retained feed dates are migrated automatically; dates already purged by an older
+version cannot be recovered. Visit history is included in exports and removed with the account.
+
 ## Appearance
 
 Settings carries four themes, a reduce-motion switch that also honours the OS preference,
@@ -252,13 +263,25 @@ npm start           # serve the build
 npm run lint        # eslint (flat config)
 npm run typecheck   # tsc --noEmit
 npm test            # vitest
+npm run smoke       # portable end-to-end API checks against localhost:3000
 npm run check       # lint + typecheck + test, what CI runs
 ```
 
-`scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
+`npm run smoke` walks the core flow against a running server on Windows, macOS, or Linux: the feed is private, the
 hour is shut by default, two demo platforms produce a balanced short-form feed, a clip saves
 to the shelf, a clip from someone else's feed is refused, the hour locks again once it has
-passed, and sign-in throttling engages. Start the app, then `bash scripts/smoke.sh`.
+passed, and sign-in throttling engages. It also verifies empty-feed recovery, concurrent requests,
+watch history, mute persistence, theme settings, export, password changes, session revocation,
+sign-out/sign-in and disconnection. It creates a unique test account and removes it afterward.
+Run against a local/test instance: registration and sign-in rate limits still apply to repeated runs.
+Set `BASE` to test another local port. The old Bash smoke script remains for compatibility.
+
+For a production process, run `npm run setup`, configure `.env`, then `npm run build` and
+`npm start`. Keep `SESSION_SECRET` stable: changing it makes stored provider tokens unreadable.
+Use a single Node process with a persistent `DATA_DIR` and HTTPS in front of the app; ephemeral
+or multi-instance hosting needs a different persistence/session architecture. Set `APP_BASE_URL`
+to your public HTTPS origin before registering OAuth callbacks. Back up both the database and
+the encryption secret. The setup command deliberately never replaces an existing `.env`.
 
 Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, build) and
 `smoke.yml` (boot the built app and run the smoke script).
