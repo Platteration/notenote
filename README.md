@@ -9,7 +9,7 @@ platform it came from, and tapping it opens the clip in that platform's native a
 Outside the window there is nothing to scroll: the API answers `423 Locked` and the UI shows a
 countdown.
 
-## Quick start
+## Running it
 
 ```bash
 npm install
@@ -241,7 +241,7 @@ bundle. A test enforces that.
 | POST   | `/api/feed/seen`                   | Record `{ keys: [...] }` as seen                     |
 | GET/PUT| `/api/settings`                    | Timezone, opening time (`HH:MM`), clips per day      |
 
-## Scripts
+## Development
 
 ```bash
 npm run dev         # development server
@@ -250,7 +250,8 @@ npm start           # serve the build
 npm run lint        # eslint (flat config)
 npm run typecheck   # tsc --noEmit
 npm test            # vitest
-npm run check       # lint + typecheck + test, what CI runs
+npm run test:conventions   # the shared repository conventions (CONVENTIONS.md)
+npm run check       # lint + typecheck + test + conventions: the gate before a push
 ```
 
 `scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
@@ -262,8 +263,8 @@ address the server itself is configured with. Start the app, then `bash scripts/
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
-Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, build) and
-`smoke.yml` (boot the built app and run the smoke script).
+Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, conventions,
+build, each as its own step) and `smoke.yml` (boot the built app and run the smoke script).
 
 Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
 which still travels on a top-level cross-site GET, so a state-changing GET would let another

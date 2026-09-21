@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "The Daily Scroll: one curated hour of short-form video from your connected social accounts.",
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "test:conventions": "node --test test/conventions.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:conventions"
   },
   "dependencies": {
     "next": "^16.3.4",
