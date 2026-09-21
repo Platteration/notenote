@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { AboutCard } from "@/components/AboutCard";
 import { Nav } from "@/components/Nav";
 import { SettingsForm } from "@/components/SettingsForm";
 import { windowFor } from "@/lib/feed";
@@ -20,6 +21,7 @@ export default async function SettingsPage() {
         <p>Signed in as {user.display_name}. Choose when your hour begins.</p>
       </section>
       <SettingsForm initial={settings} initialWindow={win} min={MIN_FEED_SIZE} max={MAX_FEED_SIZE} email={user.email} sessions={sessionCountFor(user.id)} />
+      <AboutCard />
     </main>
   );
 }

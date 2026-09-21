@@ -1,5 +1,7 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+import { resolveReduceMotion, type ReduceMotion } from "./motion";
 import type { Prefs } from "./settings";
 
 /**
@@ -8,7 +10,7 @@ import type { Prefs } from "./settings";
  */
 
 export function haptic(prefs: Pick<Prefs, "haptics" | "reduceMotion">, pattern: number | number[]): void {
-  if (!prefs.haptics || prefs.reduceMotion) return;
+  if (!prefs.haptics || reducedMotion(prefs)) return;
   if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
   try {
     navigator.vibrate(pattern);
@@ -57,12 +59,40 @@ export function chime(prefs: Pick<Prefs, "sound">, kind: "open" | "close"): void
   window.setTimeout(() => void ctx.close().catch(() => {}), 1400);
 }
 
-/** Whether the viewer has asked their OS to reduce motion. */
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+/** Whether the viewer has asked their OS to reduce motion. A page without matchMedia has not. */
 export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return window.matchMedia(REDUCED_MOTION_QUERY).matches;
+}
+
+/**
+ * Whether motion is reduced right now: the setting when it is `on` or `off`, the device when it
+ * is `system`. Nothing is ORed — `off` is a choice to have motion even where the device asks
+ * for less — so every caller reads this rather than the field.
+ */
+export function reducedMotion(prefs: Pick<Prefs, "reduceMotion">): boolean {
+  return resolveReduceMotion(prefs.reduceMotion, prefersReducedMotion());
 }
 
 export function scrollBehavior(prefs: Pick<Prefs, "reduceMotion">): ScrollBehavior {
-  return prefs.reduceMotion || prefersReducedMotion() ? "auto" : "smooth";
+  return reducedMotion(prefs) ? "auto" : "smooth";
+}
+
+function subscribeToSystemMotion(onChange: () => void): () => void {
+  if (typeof window === "undefined" || !window.matchMedia) return () => {};
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/**
+ * The resolved preference as React state. While the setting is `system` it follows the media
+ * query's `change` event, so a device setting flipped mid-session is reflected without a reload;
+ * the server render answers `false`, and hydration takes the browser's answer from there.
+ */
+export function useReduceMotion(setting: ReduceMotion): boolean {
+  const system = useSyncExternalStore(subscribeToSystemMotion, prefersReducedMotion, () => false);
+  return resolveReduceMotion(setting, system);
 }

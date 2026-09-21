@@ -189,9 +189,11 @@ drops a feed a day after its hour closes, which silently capped every streak at 
 
 ## Appearance
 
-Settings carries four themes, a reduce-motion switch that also honours the OS preference,
-opt-out haptics and an opt-in chime. Preferences are applied server-side, so there is no flash
-of the wrong theme on load.
+Settings carries four themes, a three-state reduce-motion control (System follows the device's
+`prefers-reduced-motion`; On and Off mean exactly that, whatever the device says), opt-out
+haptics and an opt-in chime, with a confirmed reset to the defaults that touches nothing else.
+Preferences are applied server-side, so there is no flash of the wrong theme on load. A row an
+older build wrote with the boolean reduce-motion reads as On for `true` and System for `false`.
 
 | Theme | What it is |
 |-------|------------|
@@ -236,6 +238,7 @@ bundle. A test enforces that.
 | GET/DELETE | `/api/account/sessions`        | Count signed-in devices, or sign out the others      |
 | GET    | `/api/account/export`              | Everything the app holds about you, as JSON          |
 | DELETE | `/api/account`                     | Delete the account and all its data                  |
+| DELETE | `/api/settings/prefs`              | Reset appearance and feedback preferences to the defaults |
 | DELETE | `/api/connect/:provider`           | Disconnect                                           |
 | GET    | `/api/feed`                        | Today's feed, or `423 Locked` with the next window and a recap of the last hour |
 | POST   | `/api/feed/seen`                   | Record `{ keys: [...] }` as seen                     |

@@ -62,6 +62,23 @@ PAST_HM="$(date -u -d '-2 hours' +%H:%M 2>/dev/null || date -u -v-2H +%H:%M)"
 api -X PUT "$BASE/api/settings" -d "{\"windowStart\":\"$PAST_HM\"}" -o /dev/null || fail "settings"
 [ "$(api -o /dev/null -w '%{http_code}' "$BASE/api/feed")" = "423" ] || fail "the scroll stayed open past its hour"
 
+echo "-> preferences reset to their defaults and touch nothing else"
+api -X PUT "$BASE/api/settings" -d '{"prefs":{"theme":"wire","reduceMotion":"off"}}' -o /dev/null || fail "prefs"
+# The page carries the choice, so the stylesheet can honour it before any script runs.
+api "$BASE/settings" | grep -q 'data-reduce-motion="false"' || fail "the settings page did not carry the reduce-motion choice"
+api -X DELETE "$BASE/api/settings/prefs" | node -e '
+  let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+    const { prefs } = JSON.parse(s);
+    if (prefs.theme !== "system" || prefs.reduceMotion !== "system") throw new Error("prefs were not reset: " + s);
+  });
+'
+api "$BASE/api/settings" | node -e '
+  let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+    const { settings } = JSON.parse(s);
+    if (settings.windowStart !== process.argv[1] || settings.feedSize !== 20) throw new Error("the reset touched the hour: " + s);
+  });
+' "$PAST_HM"
+
 echo "-> wrong passwords are rejected, and throttled where the client can be identified"
 # Per-address throttling only runs when a trusted proxy names the client, so the forwarding
 # header below counts for something only if the server was started with TRUSTED_PROXY_HOPS=1.

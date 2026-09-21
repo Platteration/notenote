@@ -76,10 +76,13 @@ button { font: inherit; }
 input, select { font: inherit; }
 
 /* ---- Reduced motion -----------------------------------------------------
-   Honoured from the OS setting and from the in-app preference, which writes
-   data-reduce-motion on the root element. */
+   A three-state preference, written to data-reduce-motion on the root element:
+   "true" reduces, "false" keeps full motion whatever the OS says, and no
+   attribute (the default, "system") follows prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  :root:not([data-reduce-motion="false"]) *,
+  :root:not([data-reduce-motion="false"]) *::before,
+  :root:not([data-reduce-motion="false"]) *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
@@ -163,7 +166,8 @@ input, select { font: inherit; }
 .tabs button { border: none; background: transparent; color: var(--fg-muted); padding: 8px 16px; border-radius: 999px; cursor: pointer; font-weight: 600; }
 .tabs button[aria-selected="true"] { background: var(--bg-elev-2); color: var(--fg); }
 
-/* Segmented control, used for the theme picker. */
+/* Segmented control, used for the theme and reduce-motion pickers. */
+.pref-heading { display: block; font-size: 15px; font-weight: 600; color: var(--fg); margin: 0 0 8px; }
 .segmented { display: inline-flex; flex-wrap: wrap; background: var(--bg-elev-2); border-radius: 999px; padding: 3px; gap: 2px; max-width: 100%; }
 .segmented button {
   border: none; background: transparent; color: var(--fg-muted); padding: 7px 13px; border-radius: 999px;
