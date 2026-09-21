@@ -248,7 +248,7 @@ npm run dev         # development server
 npm run build       # production build
 npm start           # serve the build
 npm run lint        # eslint (flat config)
-npm run typecheck   # tsc --noEmit
+npm run typecheck   # next typegen, then tsc --noEmit
 npm test            # vitest
 npm run test:conventions   # the shared repository conventions (CONVENTIONS.md)
 npm run check       # lint + typecheck + test + conventions: the gate before a push
@@ -263,8 +263,9 @@ address the server itself is configured with. Start the app, then `bash scripts/
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
-Two GitHub Actions workflows run on every push: `ci.yml` (lint, typecheck, test, conventions,
-build, each as its own step) and `smoke.yml` (boot the built app and run the smoke script).
+One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
+conventions and build, each as its own step) and a `smoke` job (boot the built app and run the
+smoke script).
 
 Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
 which still travels on a top-level cross-site GET, so a state-changing GET would let another

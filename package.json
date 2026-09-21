@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:conventions": "node --test test/conventions.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run test:conventions"
