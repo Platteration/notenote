@@ -45,7 +45,8 @@ jobs:
           SESSION_SECRET: ci-build-secret-not-a-real-deployment-key
 
   # Boots the built app and walks the core flow with scripts/smoke.sh: the one check that
-  # runs against a real server rather than a module under test.
+  # runs against a real server rather than a module under test. `npm run test:e2e` builds,
+  # starts, polls, walks and stops on its own, so this job and a developer run the same thing.
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -59,32 +60,8 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build
+      # Builds, starts on a free port with a scratch DATA_DIR, polls /api/health, runs the
+      # walk and stops the server by its recorded PID; it prints the server log on failure.
+      - run: npm run test:e2e
         env:
           SESSION_SECRET: ci-smoke-secret-not-a-real-deployment-key
-
-      # Start, wait and exercise in one step: a background process started in an earlier
-      # step is not guaranteed to survive into the next one.
-      - name: Boot and walk the core flow
-        env:
-          SESSION_SECRET: ci-smoke-secret-not-a-real-deployment-key
-          DATA_DIR: /tmp/daily-scroll-smoke
-          PORT: "3000"
-        run: |
-          npm start > /tmp/server.log 2>&1 &
-          SERVER_PID=$!
-          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
-
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:3000/api/health > /dev/null; then break; fi
-            if ! kill -0 $SERVER_PID 2>/dev/null; then
-              echo "server exited early:"; cat /tmp/server.log; exit 1
-            fi
-            sleep 1
-          done
-
-          bash scripts/smoke.sh
-
-      - name: Server log
-        if: failure()
-        run: cat /tmp/server.log || true

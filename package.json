@@ -12,6 +12,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:conventions": "node --test test/conventions.mjs",
+    "test:e2e": "bash scripts/e2e.sh",
+    "test:all": "npm test && npm run test:e2e",
     "check": "npm run lint && npm run typecheck && npm test && npm run test:conventions"
   },
   "dependencies": {

@@ -259,6 +259,8 @@ npm run typecheck   # next typegen, then tsc --noEmit
 npm test            # vitest
 npm run test:conventions   # the shared repository conventions (CONVENTIONS.md)
 npm run check       # lint + typecheck + test + conventions: the gate before a push
+npm run test:e2e    # build, serve and walk the core flow end to end
+npm run test:all    # the unit suite, then the end-to-end walk
 ```
 
 `scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
@@ -270,9 +272,13 @@ address the server itself is configured with. Start the app, then `bash scripts/
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
+`npm run test:e2e` is that walk with nothing to set up: it builds, starts the app on a free port
+with a database of its own, waits for `/api/health`, runs `scripts/smoke.sh` against it and stops
+the server by the PID it recorded, printing the server log if anything failed. Run
+`bash scripts/smoke.sh` directly when you already have a server up and want to walk that one.
+
 One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
-conventions and build, each as its own step) and a `smoke` job (boot the built app and run the
-smoke script).
+conventions and build, each as its own step) and a `smoke` job, which is `npm run test:e2e`.
 
 Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
 which still travels on a top-level cross-site GET, so a state-changing GET would let another

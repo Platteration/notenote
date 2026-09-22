@@ -79,9 +79,10 @@ describe("the token key salt on disk", () => {
     const written = fs.readFileSync(saltFile(dir), "utf8");
     const [label, value, check] = written.trim().split("\n").at(-1)!.split(" ");
     // The first character, whose six bits are all part of the salt. The last one is not: 16
-    // bytes are 128 bits and 22 base64url characters carry 132, so its low two bits are padding
-    // that the decoder drops, and flipping it left the salt unchanged for one file in four —
-    // which the reader then rightly accepted.
+    // bytes are 128 bits and 22 base64url characters carry 132, so only its top two bits are
+    // salt and its low four are padding the decoder drops. That leaves 16 of the 64 characters
+    // decoding to the same 16 bytes, so flipping the last one left the salt unchanged for one
+    // file in four — which the reader then rightly accepted.
     const flipped = `${value!.startsWith("A") ? "B" : "A"}${value!.slice(1)}`;
     fs.writeFileSync(saltFile(dir), `${label} ${flipped} ${check}\n`);
 
