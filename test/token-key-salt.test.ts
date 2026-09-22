@@ -78,7 +78,11 @@ describe("the token key salt on disk", () => {
     (await boot(dir)).prepareTokenKey();
     const written = fs.readFileSync(saltFile(dir), "utf8");
     const [label, value, check] = written.trim().split("\n").at(-1)!.split(" ");
-    const flipped = `${value!.slice(0, -1)}${value!.endsWith("A") ? "B" : "A"}`;
+    // The first character, whose six bits are all part of the salt. The last one is not: 16
+    // bytes are 128 bits and 22 base64url characters carry 132, so its low two bits are padding
+    // that the decoder drops, and flipping it left the salt unchanged for one file in four —
+    // which the reader then rightly accepted.
+    const flipped = `${value!.startsWith("A") ? "B" : "A"}${value!.slice(1)}`;
     fs.writeFileSync(saltFile(dir), `${label} ${flipped} ${check}\n`);
 
     const crypto = await boot(dir);
