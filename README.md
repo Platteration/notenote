@@ -224,6 +224,7 @@ bundle. A test enforces that.
 |--------|------------------------------------|------------------------------------------------------|
 | POST   | `/api/auth/signup`, `/login`, `/logout` | Local accounts (scrypt-hashed passwords)        |
 | GET    | `/api/auth/me`                     | Current user                                         |
+| GET    | `/api/health`                      | `{ ok, version }` for a container or uptime check; no session, nothing else |
 | GET    | `/api/connections`                 | Platform connection status                           |
 | GET    | `/api/connect/:provider/start`     | Begin OAuth (or create a demo connection)            |
 | GET    | `/api/connect/:provider/callback`  | OAuth redirect target                                |

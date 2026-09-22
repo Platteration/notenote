@@ -11,6 +11,15 @@ trap 'rm -f "$JAR"' EXIT
 api() { curl -sS -b "$JAR" -c "$JAR" -H "Content-Type: application/json" "$@"; }
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 
+echo "-> the server says it is up, to anyone, and says nothing else"
+health="$(curl -sS "$BASE/api/health")"
+case "$health" in *'"ok":true'*) ;; *) fail "health did not answer ok: $health" ;; esac
+node -e '
+  const body = JSON.parse(process.argv[1]);
+  const keys = Object.keys(body).sort().join(",");
+  if (keys !== "ok,version") throw new Error("health answered more than ok and version: " + keys);
+' "$health"
+
 echo "-> the feed is private"
 [ "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/feed")" = "401" ] || fail "feed was readable without signing in"
 
