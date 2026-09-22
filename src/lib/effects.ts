@@ -9,8 +9,13 @@ import type { Prefs } from "./settings";
  * silently where the browser doesn't support it, and never blocks the UI.
  */
 
-export function haptic(prefs: Pick<Prefs, "haptics" | "reduceMotion">, pattern: number | number[]): void {
-  if (!prefs.haptics || reducedMotion(prefs)) return;
+/**
+ * A haptic fires iff the Haptics row is on. Reduce motion governs decorative motion only —
+ * an earlier build also silenced haptics under it, which made one row answer for two and left
+ * no way to have taps without transitions.
+ */
+export function haptic(prefs: Pick<Prefs, "haptics">, pattern: number | number[]): void {
+  if (!prefs.haptics) return;
   if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
   try {
     navigator.vibrate(pattern);
