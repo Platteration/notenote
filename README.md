@@ -194,6 +194,9 @@ Settings carries four themes, a three-state reduce-motion control (System follow
 haptics and an opt-in chime, with a confirmed reset to the defaults that touches nothing else.
 Preferences are applied server-side, so there is no flash of the wrong theme on load. A row an
 older build wrote with the boolean reduce-motion reads as On for `true` and System for `false`.
+That build also silenced haptics under reduce motion, one row answering for two; they are
+independent now, so a row still carrying the boolean `true` reads with Haptics off — the quiet
+it actually had — and turning Haptics on is one tap in Settings.
 
 | Theme | What it is |
 |-------|------------|

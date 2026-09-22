@@ -46,22 +46,36 @@ export interface Settings {
  * `isReduceMotion`), because a row is whatever was written to it. This is also where the shape
  * of a value migrates: the boolean `reduceMotion` an older build stored becomes the three-state
  * one here, so every read site sees one shape and nothing is rewritten until the user next saves.
+ * The boolean spelling also dates the row, which is what lets the haptics migration below tell a
+ * row written under the coupled build from one written since.
  */
 export function parsePrefs(raw: string | null | undefined): Prefs {
   if (!raw) return { ...DEFAULT_PREFS };
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_PREFS };
-    const parsed = value as Partial<Record<keyof Prefs, unknown>>;
-    return {
-      theme: isTheme(parsed.theme) ? parsed.theme : DEFAULT_PREFS.theme,
-      reduceMotion: migrateReduceMotion(parsed.reduceMotion, DEFAULT_PREFS.reduceMotion),
-      haptics: typeof parsed.haptics === "boolean" ? parsed.haptics : DEFAULT_PREFS.haptics,
-      sound: typeof parsed.sound === "boolean" ? parsed.sound : DEFAULT_PREFS.sound,
-    };
+    value = JSON.parse(raw);
   } catch {
+    // This catch bounds one case — a column that is not JSON — and nothing else. A guard
+    // standing behind it would be indistinguishable from its own absence.
     return { ...DEFAULT_PREFS };
   }
+  // JSON that is not an object: `null`, an array, a bare string or number. Reading a field off
+  // `null` throws, and nothing catches that now, so this line is what holds the case.
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_PREFS };
+  const parsed = value as Partial<Record<keyof Prefs, unknown>>;
+  const haptics = typeof parsed.haptics === "boolean" ? parsed.haptics : DEFAULT_PREFS.haptics;
+  return {
+    theme: isTheme(parsed.theme) ? parsed.theme : DEFAULT_PREFS.theme,
+    reduceMotion: migrateReduceMotion(parsed.reduceMotion, DEFAULT_PREFS.reduceMotion),
+    // A boolean here is a row the coupled build wrote, and under that build `true` silenced
+    // haptics whatever this field said. Reading it as `false` hands that user the quiet they
+    // actually had, in the row that now owns the decision, rather than starting to vibrate a
+    // phone because the rows were separated. It is a migration, not a rule: a row written
+    // since carries the string spelling and is never touched, and the moment the user saves
+    // anything the migrated value becomes the row's own.
+    haptics: parsed.reduceMotion === true ? false : haptics,
+    sound: typeof parsed.sound === "boolean" ? parsed.sound : DEFAULT_PREFS.sound,
+  };
 }
 
 export function getSettings(userId: string): Settings {

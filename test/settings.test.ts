@@ -5,7 +5,7 @@ process.env.SESSION_SECRET = "test-secret-for-settings-tests";
 
 const { signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
-const { isReduceMotion, migrateReduceMotion, REDUCE_MOTION_OPTIONS, resolveReduceMotion } = await import("@/lib/motion");
+const { isReduceMotion, migrateReduceMotion, REDUCE_MOTION_OPTIONS, reduceMotionAttribute, resolveReduceMotion } = await import("@/lib/motion");
 const { DEFAULT_PREFS, getSettings, parsePrefs, resetPrefs, saveSettings } = await import("@/lib/settings");
 const { THEMES } = await import("@/lib/theme");
 const { canonicalTimeZone } = await import("@/lib/window");
@@ -95,6 +95,34 @@ describe("reduce motion, read from a row an older build wrote", () => {
     expect(getSettings(userId).prefs.reduceMotion).toBe("system");
   });
 
+  it("reads haptics as off while the row still carries the boolean true", () => {
+    // Under the build that wrote a boolean, haptic() returned early on reduce motion: this row
+    // felt nothing, whatever its haptics field said. Reading it as off hands that user the
+    // quiet they had rather than starting to vibrate their phone on the deploy that separated
+    // the two rows.
+    storePrefs('{"reduceMotion":true,"haptics":true}');
+    expect(getSettings(userId).prefs).toMatchObject({ reduceMotion: "on", haptics: false });
+    storePrefs('{"reduceMotion":true}');
+    expect(getSettings(userId).prefs.haptics).toBe(false);
+  });
+
+  it("leaves haptics alone for every row that was not silenced", () => {
+    // `false` left the device to decide and haptics fired; a string is a row written since the
+    // rows became independent, and On there is a choice made in the new world.
+    storePrefs('{"reduceMotion":false,"haptics":true}');
+    expect(getSettings(userId).prefs.haptics).toBe(true);
+    storePrefs('{"reduceMotion":"on","haptics":true}');
+    expect(getSettings(userId).prefs).toMatchObject({ reduceMotion: "on", haptics: true });
+    storePrefs('{"reduceMotion":"on"}');
+    expect(getSettings(userId).prefs.haptics).toBe(DEFAULT_PREFS.haptics);
+  });
+
+  it("migrates once: the next save makes the value the row's own, and taps can be turned back on", () => {
+    storePrefs('{"reduceMotion":true,"haptics":true}');
+    saveSettings(userId, { prefs: { haptics: true } });
+    expect(getSettings(userId).prefs).toMatchObject({ reduceMotion: "on", haptics: true });
+  });
+
   it("reads the three states as themselves", () => {
     for (const state of REDUCE_MOTION_OPTIONS) {
       storePrefs(JSON.stringify({ reduceMotion: state }));
@@ -128,6 +156,10 @@ describe("reduce motion, read from a row an older build wrote", () => {
   });
 
   it("survives a column that is not an object at all", () => {
+    // Each of these is held by a different line: "" by the empty check, "{not json" by the
+    // catch around JSON.parse, and the rest — "null" above all, which would throw on the first
+    // field read — by the shape guard between them. Delete the guard and "null" throws out of
+    // parsePrefs; the catch no longer stands behind it to make its absence look the same.
     for (const raw of ["", "null", "[]", '"on"', "42", "{not json", "{}"]) {
       expect(parsePrefs(raw)).toEqual(DEFAULT_PREFS);
     }
@@ -138,6 +170,15 @@ describe("reduce motion, read from a row an older build wrote", () => {
     expect(resolveReduceMotion("off", true)).toBe(false);
     expect(resolveReduceMotion("system", true)).toBe(true);
     expect(resolveReduceMotion("system", false)).toBe(false);
+  });
+
+  it("writes the root attribute the stylesheet reads, with Off spelled out", () => {
+    // "false" is not decoration: the stylesheet's prefers-reduced-motion block is scoped with
+    // :root:not([data-reduce-motion="false"]), so dropping the attribute for Off would hand an
+    // Off user their device's preference back — the OR the three-state control removed.
+    expect(reduceMotionAttribute("on")).toBe("true");
+    expect(reduceMotionAttribute("off")).toBe("false");
+    expect(reduceMotionAttribute("system")).toBeUndefined();
   });
 });
 
