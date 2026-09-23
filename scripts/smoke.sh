@@ -23,9 +23,16 @@ node -e '
 echo "-> the feed is private"
 [ "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/feed")" = "401" ] || fail "feed was readable without signing in"
 
-echo "-> sign up"
+# The default hour opens at 20:00 in the user's own zone, so a walk signed up in UTC found it
+# open from 20:00 to 20:59 UTC and failed "shut by default" every day in that hour. The walk
+# signs up where it is not within an hour of 20:00: UTC, except from 19:00 to 20:59 UTC, when
+# Asia/Tokyo (UTC+9, no daylight saving) reads 04:00 to 05:59. Every clock time the walk sets
+# later is read in the same zone.
+case "$(date -u +%H)" in 19|20) ZONE="Asia/Tokyo" ;; *) ZONE="UTC" ;; esac
+
+echo "-> sign up (timezone $ZONE)"
 api -X POST "$BASE/api/auth/signup" \
-  -d '{"email":"smoke@example.com","displayName":"Smoke","password":"password123","timezone":"UTC"}' \
+  -d "{\"email\":\"smoke@example.com\",\"displayName\":\"Smoke\",\"password\":\"password123\",\"timezone\":\"$ZONE\"}" \
   -o /dev/null || fail "signup"
 
 echo "-> the hour is shut by default"
@@ -37,7 +44,7 @@ for p in youtube reddit; do
 done
 
 echo "-> open the hour now"
-NOW_HM="$(date -u +%H:%M)"
+NOW_HM="$(TZ="$ZONE" date +%H:%M)"
 api -X PUT "$BASE/api/settings" -d "{\"windowStart\":\"$NOW_HM\",\"feedSize\":20}" -o /dev/null || fail "settings"
 
 echo "-> the feed is curated and balanced"
@@ -67,7 +74,7 @@ echo "-> a clip from another feed cannot be saved"
   || fail "accepted a clip that was not in the user's feed"
 
 echo "-> close the hour and confirm it locks again"
-PAST_HM="$(date -u -d '-2 hours' +%H:%M 2>/dev/null || date -u -v-2H +%H:%M)"
+PAST_HM="$(TZ="$ZONE" date -d '-2 hours' +%H:%M 2>/dev/null || TZ="$ZONE" date -v-2H +%H:%M)"
 api -X PUT "$BASE/api/settings" -d "{\"windowStart\":\"$PAST_HM\"}" -o /dev/null || fail "settings"
 [ "$(api -o /dev/null -w '%{http_code}' "$BASE/api/feed")" = "423" ] || fail "the scroll stayed open past its hour"
 
