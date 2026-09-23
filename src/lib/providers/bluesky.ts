@@ -52,7 +52,7 @@ function unsupported(): never {
 /** The service host is kept in the connection's scope column as "service=<url>". */
 export function serviceFromScope(scope: string | null): string {
   const m = /service=(\S+)/.exec(scope ?? "");
-  return m ? m[1] : DEFAULT_SERVICE;
+  return m?.[1] ?? DEFAULT_SERVICE;
 }
 
 function normaliseService(input: string | undefined): string {

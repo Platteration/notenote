@@ -16,11 +16,11 @@ import type { Prefs } from "@/lib/settings";
  */
 function moodFor(secondsUntilOpen: number): string {
   const hours = Math.max(0, secondsUntilOpen) / 3600;
-  const night = [80, 90, 200];
-  const dawn = [255, 150, 90];
+  const night = { r: 80, g: 90, b: 200 };
+  const dawn = { r: 255, g: 150, b: 90 };
   const t = Math.max(0, Math.min(1, 1 - hours / 6)); // last six hours warm up
-  const mix = night.map((n, i) => Math.round(n + (dawn[i] - n) * t));
-  return `rgba(${mix[0]}, ${mix[1]}, ${mix[2]}, ${(0.14 + t * 0.16).toFixed(2)})`;
+  const mix = (c: "r" | "g" | "b") => Math.round(night[c] + (dawn[c] - night[c]) * t);
+  return `rgba(${mix("r")}, ${mix("g")}, ${mix("b")}, ${(0.14 + t * 0.16).toFixed(2)})`;
 }
 
 function formatLocal(ms: number, timezone: string): string {

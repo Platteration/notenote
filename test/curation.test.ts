@@ -93,7 +93,7 @@ describe("curate", () => {
       item({ provider: "youtube", externalId: "old", creatorHandle: "a", publishedAt: NOW - 5 * 86_400_000 }),
       item({ provider: "youtube", externalId: "new", creatorHandle: "b", publishedAt: NOW - 3_600_000 }),
     ];
-    expect(curate(items, { ...base, size: 2 }).items[0].externalId).toBe("new");
+    expect(curate(items, { ...base, size: 2 }).items[0]?.externalId).toBe("new");
   });
 });
 

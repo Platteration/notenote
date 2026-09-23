@@ -29,13 +29,15 @@ function luminance([r, g, b]: Rgb): number {
 }
 
 function contrast(fg: Rgb, bg: Rgb): number {
-  const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
-  return (hi + 0.05) / (lo + 0.05);
+  const a = luminance(fg);
+  const b = luminance(bg);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
 /** Flatten a translucent colour onto an opaque one, as the browser does. */
-function composite(fg: Rgb, alpha: number, bg: Rgb): Rgb {
-  return fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha))) as Rgb;
+function composite([fr, fg, fb]: Rgb, alpha: number, [br, bg, bb]: Rgb): Rgb {
+  const over = (top: number, under: number) => Math.round(top * alpha + under * (1 - alpha));
+  return [over(fr, br), over(fg, bg), over(fb, bb)];
 }
 
 /** Pull the custom properties out of one rule block. */
@@ -46,7 +48,8 @@ function tokensOf(selector: string): Record<string, string> {
   const close = CSS.indexOf("}", open);
   const body = CSS.slice(open + 1, close);
   const out: Record<string, string> = {};
-  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) out[name] = value.trim();
+  // Neither group is optional, so every match carries both.
+  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) out[name!] = value!.trim();
   return out;
 }
 
@@ -65,9 +68,16 @@ const BADGES: Array<{ ink: string; tint: Rgb; alpha: number }> = [
 
 describe.each(THEMES)("$name theme contrast", ({ name, selector }) => {
   const tokens = tokensOf(selector);
+  /** A token the stylesheet must define: its absence fails here, naming the theme and token. */
+  const required = (key: string): string => {
+    const value = tokens[key];
+    if (value === undefined) throw new Error(`${name} is missing ${key}`);
+    return value;
+  };
   // The wireframe theme draws cards as outlines, so text sits on the page itself.
-  const surface = parseHex(tokens["--bg-elev"]?.startsWith("#") ? tokens["--bg-elev"] : tokens["--bg"]);
-  const page = parseHex(tokens["--bg"]);
+  const elevated = tokens["--bg-elev"];
+  const surface = parseHex(elevated?.startsWith("#") ? elevated : required("--bg"));
+  const page = parseHex(required("--bg"));
 
   it("defines every colour token the themes share", () => {
     for (const token of ["--bg", "--fg", "--fg-muted", "--fg-faint", ...BADGES.map((b) => b.ink)]) {
@@ -76,7 +86,7 @@ describe.each(THEMES)("$name theme contrast", ({ name, selector }) => {
   });
 
   it.each(["--fg", "--fg-muted", "--fg-faint"])("%s clears WCAG AA on both surfaces", (token) => {
-    const ink = parseHex(tokens[token]);
+    const ink = parseHex(required(token));
     expect(contrast(ink, surface), `${name} ${token} on the card surface`).toBeGreaterThanOrEqual(AA_NORMAL);
     expect(contrast(ink, page), `${name} ${token} on the page`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
@@ -84,6 +94,6 @@ describe.each(THEMES)("$name theme contrast", ({ name, selector }) => {
   it.each(BADGES)("$ink clears WCAG AA on its own tinted pill", ({ ink, tint, alpha }) => {
     // Badge pills are translucent in dark and light; the wireframe theme leaves them clear.
     const pill = name === "wire" ? surface : composite(tint, alpha, surface);
-    expect(contrast(parseHex(tokens[ink]), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(contrast(parseHex(required(ink)), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });

@@ -109,11 +109,11 @@ describe("per-platform budget", () => {
 
     expect(elapsed).toBeLessThan(2000);
     expect(results).toHaveLength(1);
-    expect(results[0].items).toEqual([]);
+    expect(results[0]!.items).toEqual([]);
     // A short classified reason, not the internal message: this string is frozen into the
     // feed row, returned by /api/feed and re-served by the account export.
-    expect(results[0].error).toBe("timed out");
-    expect(results[0].error).not.toMatch(/150|skipped/);
+    expect(results[0]!.error).toBe("timed out");
+    expect(results[0]!.error).not.toMatch(/150|skipped/);
   });
 
   it("serves the last good items when a platform stalls", async () => {
@@ -125,9 +125,9 @@ describe("per-platform budget", () => {
     vi.spyOn(PROVIDERS.youtube, "fetchItems").mockImplementation(() => new Promise(() => {}));
 
     const results = await collectItems(userId);
-    expect(results[0].items).toEqual(stale);
-    expect(results[0].fromCache).toBe(true);
-    expect(results[0].error).toBe("timed out");
+    expect(results[0]?.items).toEqual(stale);
+    expect(results[0]?.fromCache).toBe(true);
+    expect(results[0]?.error).toBe("timed out");
   });
 
   it("one slow platform does not stop the others returning", async () => {
@@ -140,9 +140,9 @@ describe("per-platform budget", () => {
 
     const results = await collectItems(userId);
     const byProvider = Object.fromEntries(results.map((r) => [r.provider, r]));
-    expect(byProvider.reddit.items).toHaveLength(1);
-    expect(byProvider.reddit.error).toBeNull();
-    expect(byProvider.youtube.error).toBe("timed out");
+    expect(byProvider.reddit?.items).toHaveLength(1);
+    expect(byProvider.reddit?.error).toBeNull();
+    expect(byProvider.youtube?.error).toBe("timed out");
   });
 });
 

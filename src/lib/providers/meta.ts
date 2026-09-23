@@ -56,9 +56,11 @@ export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
  * prop. A caller then has an object that is not a platform and renders nothing, or throws.
  */
 export function providerMeta(id: string): ProviderMeta | null {
-  return Object.prototype.hasOwnProperty.call(PROVIDER_META, id)
-    ? (PROVIDER_META as Record<string, ProviderMeta>)[id]
-    : null;
+  return isProviderId(id) ? PROVIDER_META[id] : null;
+}
+
+function isProviderId(id: string): id is ProviderId {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_META, id);
 }
 
 export function providerName(id: string): string {

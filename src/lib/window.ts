@@ -165,15 +165,17 @@ export function computeWindow(
   const durationMs = windowMinutes * 60 * 1000;
   const today = wallClock(nowMs, timeZone);
 
-  // Candidate windows: yesterday's (in case it spans midnight and is still open), today's, tomorrow's.
-  const candidates = [-1, 0, 1].map((delta) => {
+  const candidate = (delta: number) => {
     const d = addDays(today.year, today.month, today.day, delta);
     const opensAt = zonedTimeToInstant(d.year, d.month, d.day, start.hour, start.minute, timeZone);
     return { dayKey: dayKeyOf(d), opensAt, closesAt: opensAt + durationMs };
-  });
+  };
+  // Candidate windows: yesterday's (in case it spans midnight and is still open), today's, tomorrow's.
+  const tomorrow = candidate(1);
+  const candidates = [candidate(-1), candidate(0), tomorrow];
 
   const open = candidates.find((c) => nowMs >= c.opensAt && nowMs < c.closesAt);
-  const upcoming = candidates.find((c) => c.opensAt > nowMs) ?? candidates[2];
+  const upcoming = candidates.find((c) => c.opensAt > nowMs) ?? tomorrow;
 
   const current = open ?? upcoming;
   const next = open ? (candidates.find((c) => c.opensAt > open.opensAt) ?? upcoming) : upcoming;

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import nodeCrypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -76,6 +76,11 @@ describe("what the stored ciphertext gives away about SESSION_SECRET", () => {
 
   it("is not opened by a bare hash of the secret either", () => {
     const [, iv, tag, enc] = encrypt("an-access-token").split(".");
+    // Without all three parts the decipher below throws on its own, and `toThrow` would pass
+    // having tested nothing.
+    assert.isDefined(iv, "the ciphertext has an iv");
+    assert.isDefined(tag, "the ciphertext has an auth tag");
+    assert.isDefined(enc, "the ciphertext has a body");
     const open = () => {
       const d = nodeCrypto.createDecipheriv("aes-256-gcm", nodeCrypto.createHash("sha256").update(ORIGINAL).digest(), Buffer.from(iv, "base64url"));
       d.setAuthTag(Buffer.from(tag, "base64url"));
@@ -104,7 +109,7 @@ describe("what the stored ciphertext gives away about SESSION_SECRET", () => {
         vi.resetModules();
         process.env.DATA_DIR = dir;
         const fresh = await import("@/lib/crypto");
-        ids.push(fresh.encrypt("an-access-token").split(".")[0]);
+        ids.push(fresh.encrypt("an-access-token").split(".")[0]!); // split answers at least one part
         const salt = path.join(dir, "token-key.salt");
         expect(fs.existsSync(salt)).toBe(true);
         // The salt is not secret, but it lives beside the database and inherits its rules.

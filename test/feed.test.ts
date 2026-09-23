@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-feed-tests";
@@ -128,8 +128,9 @@ describe("what a platform is allowed to put in a feed", () => {
     ]);
 
     const [result] = await collectItems(userId, IN_THE_HOUR);
+    assert.isDefined(result, "the connected platform reports back");
     expect(result.items).toHaveLength(MAX_ITEMS_PER_PROVIDER);
-    const first = result.items[0];
+    const first = result.items[0]!;
     expect(first.key).toHaveLength(MAX_ITEM_KEY);
     expect(first.title).toHaveLength(MAX_ITEM_TEXT);
     expect(first.creator).toHaveLength(MAX_ITEM_TEXT);
@@ -164,6 +165,7 @@ describe("what a platform is allowed to put in a feed", () => {
         metrics: { views: Number.POSITIVE_INFINITY, likes: 3 },
       }),
     ]);
+    assert.isDefined(only, "an item with bad numbers is repaired, not dropped");
     expect(only.durationSeconds).toBeNull();
     expect(only.publishedAt).toBe(0);
     expect(only.metrics.views).toBeUndefined();

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, assert, describe, expect, it } from "vitest";
 
 const { default: nextConfig } = await import("../next.config");
 const { contentSecurityPolicy, securityHeaders } = await import("@/lib/security-headers");
@@ -30,7 +30,9 @@ afterEach(() => {
 describe("security headers", () => {
   it("stops the app being framed, which is what the one-click settings buttons need", () => {
     const production = headerMap({ NODE_ENV: "production" });
-    expect(directives(production["Content-Security-Policy"])["frame-ancestors"]).toEqual(["'none'"]);
+    const csp = production["Content-Security-Policy"];
+    assert.isDefined(csp, "production sends a Content-Security-Policy");
+    expect(directives(csp)["frame-ancestors"]).toEqual(["'none'"]);
     // The older header too, for anything that does not implement frame-ancestors.
     expect(production["X-Frame-Options"]).toBe("DENY");
   });
@@ -137,7 +139,8 @@ function sizeInBytes(limit: unknown): number {
   if (typeof limit === "number") return limit;
   const m = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)$/i.exec(String(limit));
   if (!m) throw new Error(`not a size: ${String(limit)}`);
-  return Number(m[1]) * { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 }[m[2].toLowerCase() as "b" | "kb" | "mb" | "gb"];
+  // Neither group is optional, so a match carries both.
+  return Number(m[1]) * { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 }[m[2]!.toLowerCase() as "b" | "kb" | "mb" | "gb"];
 }
 
 /**

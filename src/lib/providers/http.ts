@@ -162,6 +162,7 @@ export function expiresAtFrom(expiresIn: number | undefined | null): number | nu
 export function parseIsoDuration(iso: string): number | null {
   const m = /^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso);
   if (!m) return null;
-  const [, d, h, mi, s] = m.map((x) => (x ? Number(x) : 0));
-  return d * 86400 + h * 3600 + mi * 60 + s;
+  // Every part is optional, so a group that did not take part counts as zero.
+  const n = (x: string | undefined) => (x ? Number(x) : 0);
+  return n(m[1]) * 86400 + n(m[2]) * 3600 + n(m[3]) * 60 + n(m[4]);
 }

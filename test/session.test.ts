@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { assert, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
 
 process.env.DATABASE_FILE = ":memory:";
@@ -61,7 +61,10 @@ describe("session tokens at rest", () => {
     // Somebody who can read the database file — a leaked backup, a world-readable DATA_DIR —
     // holds this string. Presenting it must not be a sign-in.
     await createSession(userId);
-    jar.set(SESSION_COOKIE, storedTokens()[0]);
+    const [stored] = storedTokens();
+    // Without a stored value the jar would hold nothing, and "not signed in" would pass untested.
+    assert.isDefined(stored, "the session was stored");
+    jar.set(SESSION_COOKIE, stored);
     expect(await currentUser()).toBeNull();
   });
 

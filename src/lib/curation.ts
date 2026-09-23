@@ -69,14 +69,14 @@ export function scoreItems(items: MediaItem[], now: number): Map<string, number>
   }
   const scores = new Map<string, number>();
   for (const [, list] of byProvider) {
-    const logs = list.map((it) => Math.log1p(engagement(it)));
-    const max = Math.max(...logs, 1e-9);
-    list.forEach((it, i) => {
-      const eng = logs[i] / max; // 0..1 within platform
+    const logged = list.map((it) => ({ it, log: Math.log1p(engagement(it)) }));
+    const max = Math.max(...logged.map((l) => l.log), 1e-9);
+    for (const { it, log } of logged) {
+      const eng = log / max; // 0..1 within platform
       const ageHours = Math.max(0, (now - it.publishedAt) / 3_600_000);
       const recency = Math.exp(-ageHours / 72); // ~1/e after three days
       scores.set(it.key, 0.6 * eng + 0.4 * recency);
-    });
+    }
   }
   return scores;
 }
@@ -147,7 +147,7 @@ export function curate(all: MediaItem[], opts: CurationOptions): CurationResult 
   let cursor = providers.length ? Math.floor(rand() * providers.length) : 0;
   let idleRounds = 0;
   while (picked.length < opts.size && providers.length && idleRounds < providers.length) {
-    const provider = providers[cursor % providers.length];
+    const provider = providers[cursor % providers.length]!;
     cursor++;
     const q = queues.get(provider)!;
     if ((perProvider[provider] ?? 0) >= cap || q.length === 0) {
@@ -157,7 +157,7 @@ export function curate(all: MediaItem[], opts: CurationOptions): CurationResult 
     // Prefer the best item whose creator hasn't dominated yet; fall back to the head.
     let idx = q.findIndex((it) => (perCreator.get(it.creatorHandle) ?? 0) < 2);
     if (idx === -1) idx = 0;
-    const [item] = q.splice(idx, 1);
+    const item = q.splice(idx, 1)[0]!;
     picked.push(item);
     perProvider[provider] = (perProvider[provider] ?? 0) + 1;
     perCreator.set(item.creatorHandle, (perCreator.get(item.creatorHandle) ?? 0) + 1);

@@ -75,10 +75,9 @@ describe("helpers", () => {
 describe("the formatter cache", () => {
   /** Case permutations of one real zone, which Intl accepts every one of. */
   function spelling(base: string, n: number): string {
-    const letters = [...base].flatMap((c, i) => (/[a-z]/i.test(c) ? [i] : []));
-    const chars = [...base.toLowerCase()];
-    for (let bit = 0; bit < letters.length; bit++) if ((n >> bit) & 1) chars[letters[bit]] = chars[letters[bit]].toUpperCase();
-    return chars.join("");
+    // Each letter takes the next bit of n: set is upper case, clear is lower.
+    let bit = 0;
+    return [...base].map((c) => (/[a-z]/i.test(c) && (n >> bit++) & 1 ? c.toUpperCase() : c.toLowerCase())).join("");
   }
 
   it("collapses every spelling of a zone onto the one the platform reports", () => {

@@ -30,11 +30,11 @@ describe("saved shelf", () => {
   it("saves a clip from one of the user's own feeds and keeps its content", () => {
     const items = demoItems("youtube", userId, NOW, 3);
     seedFeed("2026-09-06", items);
-    const saved = saveItem(userId, items[0].key, NOW);
-    expect(saved.item.title).toBe(items[0].title);
+    const saved = saveItem(userId, items[0]!.key, NOW);
+    expect(saved.item.title).toBe(items[0]!.title);
     const list = listSaved(userId);
     expect(list).toHaveLength(1);
-    expect(list[0].item.permalink).toBe(items[0].permalink);
+    expect(list[0]!.item.permalink).toBe(items[0]!.permalink);
   });
 
   it("refuses a key that isn't in any of the user's feeds", () => {
@@ -43,7 +43,7 @@ describe("saved shelf", () => {
 
   it("removes a saved clip", () => {
     const items = demoItems("youtube", userId, NOW, 3);
-    unsaveItem(userId, items[0].key);
+    unsaveItem(userId, items[0]!.key);
     expect(listSaved(userId)).toHaveLength(0);
   });
 });
@@ -68,7 +68,7 @@ describe("muted creators", () => {
 
   it("keeps muted creators out of the curated feed", () => {
     const items = demoItems("youtube", userId, NOW, 30);
-    const target = items[0].creatorHandle;
+    const target = items[0]!.creatorHandle;
     const base = { size: 20, seed: "s", now: NOW, seenKeys: new Set<string>() };
     const before = curate(items, base).items.filter((i) => i.creatorHandle === target).length;
     const after = curate(items, { ...base, mutedCreators: new Set([`youtube:${target.toLowerCase()}`]) }).items;
@@ -93,7 +93,7 @@ describe("recording what was watched", () => {
   it("keeps the real keys and drops the invented ones in the same call", () => {
     const items = demoItems("tiktok", userId, NOW, 3);
     seedFeed("2026-09-11", items);
-    expect(markSeen(userId, [items[0].key, "tiktok:not-real"], NOW)).toBe(1);
+    expect(markSeen(userId, [items[0]!.key, "tiktok:not-real"], NOW)).toBe(1);
   });
 });
 
@@ -164,6 +164,24 @@ describe("streak", () => {
     expect(db.prepare("SELECT day_key FROM hour_opens WHERE user_id = ?").all(userId)).toEqual([{ day_key: "2026-09-06" }]);
 
     db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+  });
+
+  it("leaves out a stored day that is not a date instead of failing every locked request", async () => {
+    // The ledger is written by this app, but it is still stored data. A key that is not a date
+    // used to throw a RangeError out of streakFor, and getFeed reads the streak on every request
+    // while the hour is shut, so one such row failed each of them for as long as it was there.
+    const db = getDb();
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+    for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) recordHourOpen(userId, day, NOW);
+    // Too few parts ("2026-09", ""), and three parts that are not numbers.
+    for (const day of ["2026-09", "", "not-a-date", "2026-09-05x"]) recordHourOpen(userId, day, NOW);
+
+    expect(streakFor(userId, "2026-09-06")).toEqual({ current: 3, longest: 3, total: 3 });
+    const payload = await getFeed(userId, NOW); // noon UTC, before the default 20:00 hour
+    if (payload.status !== "locked") throw new Error(`expected the hour to be shut at noon, got ${payload.status}`);
+    expect(payload.streak).toEqual({ current: 3, longest: 3, total: 3 });
+
     db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
   });
 

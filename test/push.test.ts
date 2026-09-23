@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { assert, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-push-tests";
@@ -57,7 +57,7 @@ describe("subscription validation", () => {
     push.saveSubscription(userId, { ...sub(1), keys: { p256dh: "new", auth: "new" } });
     const rows = push.subscriptionsFor(userId);
     expect(rows).toHaveLength(1);
-    expect(rows[0].p256dh).toBe("new");
+    expect(rows[0]!.p256dh).toBe("new");
   });
 });
 
@@ -81,7 +81,7 @@ describe("one device belongs to one account", () => {
   it("still lets the same account re-register the same device", () => {
     expect(push.saveSubscription(userId, sub(1))).toBe(true);
     expect(push.saveSubscription(userId, { ...sub(1), keys: { p256dh: "rotated", auth: "rotated" } })).toBe(true);
-    expect(push.subscriptionsFor(userId)[0].p256dh).toBe("rotated");
+    expect(push.subscriptionsFor(userId)[0]?.p256dh).toBe("rotated");
   });
 });
 
@@ -152,7 +152,9 @@ describe("daily delivery", () => {
     push.saveSubscription(userId, sub(1));
     sendNotification.mockResolvedValue({});
     await push.notifyHourOpen(userId, "2026-09-06", 60);
-    const payload = JSON.parse(sendNotification.mock.calls[0][1] as string);
+    const call = sendNotification.mock.calls[0];
+    assert.isDefined(call, "a notification was sent");
+    const payload = JSON.parse(call[1] as string);
     expect(payload.body).toContain("60 minutes");
     expect(payload.url).toBe("/feed");
     expect(payload.tag).toBe("daily-scroll-2026-09-06");

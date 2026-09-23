@@ -125,6 +125,14 @@ export interface Streak {
   total: number;
 }
 
+/** The `YYYY-MM-DD` key of the day before `key`, or null when `key` is not a date. */
+function dayBefore(key: string): string | null {
+  const [y, m, d] = key.split("-").map(Number);
+  if (y === undefined || m === undefined || d === undefined) return null;
+  const prev = new Date(Date.UTC(y, m - 1, d - 1));
+  return Number.isNaN(prev.getTime()) ? null : prev.toISOString().slice(0, 10);
+}
+
 /**
  * A streak of showing up, not of watching more. The hour is fixed either way, so this
  * can't be inflated by scrolling harder — only by keeping the ritual.
@@ -132,24 +140,24 @@ export interface Streak {
 export function streakFor(userId: string, todayKey: string): Streak {
   // Counted from hour_opens, not daily_feeds: the housekeeping sweep drops a feed a day
   // after its hour closes, so a streak read from those rows could never pass two.
+  // A row whose key is not a date sits in no run, so it is left out rather than allowed to
+  // throw: this is read on every request while the hour is shut, and one such row would
+  // otherwise fail each of them for as long as the row is there.
   const days = (
     getDb().prepare("SELECT day_key FROM hour_opens WHERE user_id = ? ORDER BY day_key DESC").all(userId) as Array<{
       day_key: string;
     }>
-  ).map((r) => r.day_key);
+  )
+    .map((r) => r.day_key)
+    .filter((key) => dayBefore(key) !== null);
   if (days.length === 0) return { current: 0, longest: 0, total: 0 };
 
   const set = new Set(days);
-  const dayBefore = (key: string) => {
-    const [y, m, d] = key.split("-").map(Number);
-    const prev = new Date(Date.UTC(y, m - 1, d - 1));
-    return prev.toISOString().slice(0, 10);
-  };
 
   // The run may end today or yesterday; a gap of more than a day breaks it.
   let cursor = set.has(todayKey) ? todayKey : dayBefore(todayKey);
   let current = 0;
-  while (set.has(cursor)) {
+  while (cursor !== null && set.has(cursor)) {
     current++;
     cursor = dayBefore(cursor);
   }
