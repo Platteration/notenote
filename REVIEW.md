@@ -481,9 +481,9 @@ record of what was found, and this block is a record of what was done about it.
     settings changes land as one identical diff in both, and each carries the other's tests.
 
 The workflow below is the shape every npm repository's `ci.yml` now follows, without the
-`npm audit` step in `check` (item 4 made it a job of its own) and with
-`npm run test:conventions` (the Python repository runs `ruff check .`, `pytest -q` and its
-own conventions test); the exact form is in `CONVENTIONS.md`.
+`npm audit` step (item 4) and with `npm run test:conventions` (the Python repository runs
+`ruff check .`, `pytest -q` and its own conventions test); the exact form is in
+`CONVENTIONS.md`.
 
 ### A hardened workflow to copy
 
