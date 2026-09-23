@@ -44,27 +44,13 @@ jobs:
           # The build renders pages that read settings, so it needs a session secret.
           SESSION_SECRET: ci-build-secret-not-a-real-deployment-key
 
-  # Boots the built app and walks the core flow with scripts/smoke.sh: the one check that
-  # runs against a real server rather than a module under test. `npm run test:e2e` builds,
-  # starts, polls, walks and stops on its own, so this job and a developer run the same thing.
-  smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - run: npm ci
-
-      # Builds, starts on a free port with a scratch DATA_DIR, polls /api/health, runs the
-      # walk and stops the server by its recorded PID; it prints the server log on failure.
+      # Boots the built app and walks the core flow with scripts/smoke.sh: the one check that
+      # runs against a real server rather than a module under test. `npm run test:e2e` builds,
+      # starts on a free port with a scratch DATA_DIR and its own session secret, polls
+      # /api/health, walks and stops the server by its recorded PID, printing the server log on
+      # failure, so this step and a developer run the same thing. It builds again; the Build
+      # step above is kept because it names a build failure as its own.
       - run: npm run test:e2e
-        env:
-          SESSION_SECRET: ci-smoke-secret-not-a-real-deployment-key
 
   # Its own job, so an advisory published against an unchanged tree turns audit red and
   # leaves check meaning what it always meant. npm audit reads the lockfile: no install.

@@ -82,6 +82,12 @@ test('the CI workflow shape', () => {
     const runs = ci.split('\n').filter((line) => /\bnpm audit\b/.test(line) && !/^\s*#/.test(line));
     assert.equal(runs.length, 1, 'npm audit runs in the audit job and nowhere else, so check means what it always meant');
   }
+  // The e2e suite is a step of check, not a job of its own: it needs no other toolchain.
+  if (scripts['test:e2e']) {
+    const e2e = ci.split('\n').filter((line) => /\bnpm run test:e2e\b/.test(line) && !/^\s*#/.test(line));
+    assert.equal(e2e.length, 1, 'npm run test:e2e runs once');
+    assert.ok(jobLines(ci, 'check').some((line) => /\bnpm run test:e2e\b/.test(line)), 'npm run test:e2e is a step of the check job');
+  }
 });
 
 // The lines of one job under `jobs:`, without blank lines and comments: from its `  name:`
