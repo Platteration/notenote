@@ -278,7 +278,8 @@ the server by the PID it recorded, printing the server log if anything failed. R
 `bash scripts/smoke.sh` directly when you already have a server up and want to walk that one.
 
 One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
-conventions and build, each as its own step) and a `smoke` job, which is `npm run test:e2e`.
+conventions and build, each as its own step), a `smoke` job, which is `npm run test:e2e`, and an
+`audit` job, which runs `npm audit --omit=dev --audit-level=high` against the lockfile.
 
 Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
 which still travels on a top-level cross-site GET, so a state-changing GET would let another

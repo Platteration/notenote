@@ -463,6 +463,9 @@ record of what was found, and this block is a record of what was done about it.
    one with its first code).
 4. Open, by decision: no `npm audit` step. Unactioned advisories only turn CI red;
    Dependabot's security updates are the channel. Reconsider if those go unmerged.
+   Reversed (2026-09-23): Dependabot's security updates open against the default branch,
+   which is not this one, so here they are no channel at all. `ci.yml` has an `audit`
+   job of its own running `npm audit --omit=dev --audit-level=high` over the lockfile.
 5. Done: `npm ci || npm install` appears nowhere.
 6. Half: abientnoiser and simplacad have lockfiles and `npm ci`; selfreportle and
    phonogeometry deliberately keep none and install Playwright at a pinned version with
@@ -478,9 +481,9 @@ record of what was found, and this block is a record of what was done about it.
     settings changes land as one identical diff in both, and each carries the other's tests.
 
 The workflow below is the shape every npm repository's `ci.yml` now follows, without the
-`npm audit` step (item 4) and with `npm run test:conventions` (the Python repository runs
-`ruff check .`, `pytest -q` and its own conventions test); the exact form is in
-`CONVENTIONS.md`.
+`npm audit` step in `check` (item 4 made it a job of its own) and with
+`npm run test:conventions` (the Python repository runs `ruff check .`, `pytest -q` and its
+own conventions test); the exact form is in `CONVENTIONS.md`.
 
 ### A hardened workflow to copy
 
