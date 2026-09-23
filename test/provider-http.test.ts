@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 const { BlockedHostError } = await import("@/lib/net-guard");
-const { MAX_RESPONSE_BYTES, ProviderResponseTooLargeError, getJson } = await import("@/lib/providers/http");
+const { MAX_RESPONSE_BYTES, ProviderResponseTooLargeError, getJson, parseIsoDuration } = await import("@/lib/providers/http");
 
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse) => void;
 
@@ -161,5 +161,23 @@ describe("response size", () => {
     });
     expect(MAX_RESPONSE_BYTES).toBeGreaterThan(filler.length);
     await expect(getJson("Test", `${server.origin}/ok`)).resolves.toEqual({ filler });
+  });
+});
+
+// YouTube's contentDetails.duration becomes durationSeconds, which isShortForm compares with
+// SHORT_FORM_MAX_SECONDS: a misread here lets a ten-minute video into the short-form feed.
+describe("ISO 8601 durations", () => {
+  it.each([
+    ["PT1M30S", 90],
+    ["PT45S", 45],
+    ["PT10M", 600],
+    ["P1DT2H", 93_600],
+    ["PT", 0],
+  ])("reads %s as %i seconds", (iso, seconds) => {
+    expect(parseIsoDuration(iso)).toBe(seconds);
+  });
+
+  it.each([["P1W"], [""]])("refuses %j rather than guessing", (iso) => {
+    expect(parseIsoDuration(iso)).toBeNull();
   });
 });
