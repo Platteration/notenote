@@ -25,6 +25,14 @@ describe("private address detection", () => {
     ["::ffff:7f00:1", "the same loopback written in hex, as the URL parser rewrites it"],
     ["::ffff:a9fe:a9fe", "metadata in hex"],
     ["::ffff:0a00:0001", "10.0.0.1 in hex"],
+    // The cases above cannot tell which group holds the high half of the IPv4 address: each
+    // ends in a group below 256, so read the other way round it is 0.x.x.x and refused anyway,
+    // and a9fe:a9fe reads the same both ways. These read as public addresses if the groups are
+    // swapped (1.1.192.168, 1.2.169.254), so they pin the order.
+    ["::ffff:192.168.1.1", "private wearing IPv6, which read group-swapped is public"],
+    ["::ffff:c0a8:101", "192.168.1.1 in hex"],
+    ["::ffff:169.254.1.2", "link local wearing IPv6, which read group-swapped is public"],
+    ["::c0a8:101", "deprecated IPv4-compatible 192.168.1.1"],
     ["::7f00:1", "deprecated IPv4-compatible loopback"],
     ["fc00::1", "unique local, low end of the range"],
     ["fdff::1", "unique local, high end"],
@@ -33,7 +41,9 @@ describe("private address detection", () => {
     expect(isPrivateAddress(ip)).toBe(true);
   });
 
-  it.each([["8.8.8.8"], ["1.1.1.1"], ["93.184.216.34"], ["172.15.0.1"], ["172.32.0.1"], ["2606:4700::1111"]])(
+  // ::ffff:1.1.192.168 is public, and read group-swapped it would be 192.168.1.1: the byte-order
+  // pin from the other side.
+  it.each([["8.8.8.8"], ["1.1.1.1"], ["93.184.216.34"], ["172.15.0.1"], ["172.32.0.1"], ["2606:4700::1111"], ["::ffff:1.1.192.168"]])(
     "allows the public address %s",
     (ip) => {
       expect(isPrivateAddress(ip)).toBe(false);
