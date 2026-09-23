@@ -95,6 +95,32 @@ describe("curate", () => {
     ];
     expect(curate(items, { ...base, size: 2 }).items[0]?.externalId).toBe("new");
   });
+
+  // Engagement is 60% of the score. One platform, so it is normalised against the same maximum;
+  // different creators, so the creator spread does not reorder them.
+  const quiet = { views: 1000, likes: 50 };
+  const loved = { views: 1_000_000, likes: 100_000 };
+
+  it("scores engagement so the more engaged of two equally fresh clips comes first", () => {
+    const items = [
+      item({ provider: "youtube", externalId: "quiet", creatorHandle: "a", metrics: quiet }),
+      item({ provider: "youtube", externalId: "loved", creatorHandle: "b", metrics: loved }),
+    ];
+    // Ten days' seeds: with the engagement term ignored the two tie, and one seed's jitter could
+    // still happen to put the right one first.
+    for (let day = 1; day <= 10; day++) {
+      const seed = `user:2026-09-${String(day).padStart(2, "0")}`;
+      expect(curate(items, { ...base, size: 2, seed }).items.map((i) => i.externalId)).toEqual(["loved", "quiet"]);
+    }
+  });
+
+  it("lets far higher engagement outweigh a clip a day newer", () => {
+    const items = [
+      item({ provider: "youtube", externalId: "fresh", creatorHandle: "a", publishedAt: NOW - 3_600_000, metrics: quiet }),
+      item({ provider: "youtube", externalId: "loved", creatorHandle: "b", publishedAt: NOW - 25 * 3_600_000, metrics: loved }),
+    ];
+    expect(curate(items, { ...base, size: 2 }).items.map((i) => i.externalId)).toEqual(["loved", "fresh"]);
+  });
 });
 
 describe("seededRandom", () => {
