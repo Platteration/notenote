@@ -164,7 +164,7 @@ export async function collectItems(userId: string, at: number = now()): Promise<
   const db = getDb();
   const rows = db.prepare("SELECT * FROM connections WHERE user_id = ?").all(userId) as unknown as ConnectionRow[];
   return Promise.all(
-    rows.map(async (row): Promise<ProviderFetchResult> => {
+    rows.filter((row) => getProvider(row.provider)).map(async (row): Promise<ProviderFetchResult> => {
       const providerId = row.provider as ProviderId;
       if (row.demo === 1) {
         return { provider: providerId, items: demoItems(providerId, userId, at), error: null, fromCache: false };

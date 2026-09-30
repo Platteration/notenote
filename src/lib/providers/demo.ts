@@ -189,6 +189,7 @@ export function demoItems(provider: ProviderId, userId: string, now: number, cou
     const duration = isLong ? 240 + Math.floor(rand() * 600) : 8 + Math.floor(rand() * 70);
     const views = Math.floor(Math.pow(10, 2.5 + rand() * 4));
     items.push({
+      demo: true,
       key: `${provider}:${externalId}`,
       provider,
       externalId,

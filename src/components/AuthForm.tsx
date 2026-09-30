@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { requestJson, safeReturnPath } from "@/lib/client-api";
 
 export function AuthForm() {
   const router = useRouter();
@@ -18,20 +19,20 @@ export function AuthForm() {
     setBusy(true);
     setError(null);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const res = await fetch(mode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
+    try {
+    await requestJson(mode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, displayName, timezone }),
     });
-    setBusy(false);
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(body.error ?? "Something went wrong");
-      return;
-    }
     const next = params.get("next");
-    router.push(next && next.startsWith("/") ? next : mode === "signup" ? "/connect" : "/feed");
+    router.push(safeReturnPath(next, mode === "signup" ? "/connect" : "/feed"));
     router.refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

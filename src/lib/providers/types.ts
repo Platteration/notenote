@@ -28,6 +28,8 @@ export const PROVIDER_IDS: ProviderId[] = [
 
 /** A normalised short-form media item, regardless of which platform it came from. */
 export interface MediaItem {
+  /** Generated sample content, with no real post to open on the platform. */
+  demo?: boolean;
   /** Globally unique, stable key: `${provider}:${externalId}`. */
   key: string;
   provider: ProviderId;

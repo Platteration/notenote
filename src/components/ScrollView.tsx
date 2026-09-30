@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Countdown } from "./Countdown";
+import { requestJson } from "@/lib/client-api";
 import { PlatformLogo } from "./PlatformLogo";
 import type { CurationReason } from "@/lib/curation";
 import { chime, haptic, scrollBehavior } from "@/lib/effects";
@@ -85,14 +86,14 @@ function Slide({
   };
   return (
     <article className={`slide${muted ? " slide-muted" : ""}`} ref={ref} data-index={index} aria-label={item.title}>
-      <a
+      {!item.demo && <a
         className="slide-tap"
         href={item.permalink}
         onClick={open}
         aria-label={`Open on ${name}`}
         target="_blank"
         rel="noopener noreferrer"
-      />
+      />}
       <span className="slide-source">
         <PlatformLogo provider={item.provider} size={44} title={`From ${name}`} />
       </span>
@@ -119,6 +120,7 @@ function Slide({
       <div className="slide-body">
         <div className="slide-meta">
           <span className="chip">{name}</span>
+          {item.demo && <span className="chip">Demo · sample content</span>}
           {muted && <span className="chip chip-muted">Muted</span>}
           {item.durationSeconds != null && <span className="chip">{item.durationSeconds}s</span>}
           <span className="chip">{ago(item.publishedAt)}</span>
@@ -163,9 +165,9 @@ function Slide({
           {item.metrics.comments != null && <span>{compact(item.metrics.comments)} comments</span>}
         </div>
         <div className="slide-actions">
-          <a className="btn" href={item.permalink} onClick={open} target="_blank" rel="noopener noreferrer">
+          {item.demo ? <span className="chip">Connect a live account for real clips</span> : <a className="btn" href={item.permalink} onClick={open} target="_blank" rel="noopener noreferrer">
             Open in {name}
-          </a>
+          </a>}
           <button
             className="btn btn-ghost"
             type="button"
@@ -206,7 +208,8 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   const watchedRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<Set<string>>(new Set());
   const [savedKeys, setSavedKeys] = useState<Set<string>>(() => new Set(initial.savedKeys));
-  const [mutedCreators, setMutedCreators] = useState<Set<string>>(() => new Set());
+  const [mutedCreators, setMutedCreators] = useState<Set<string>>(() => new Set(initial.mutedCreators));
+  const mutations = useRef(new Set<string>());
   const [soundOn, setSoundOn] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const hasVideo = useMemo(() => items.some((i) => i.videoUrl), [items]);
@@ -219,7 +222,15 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   /** Saving keeps a copy of the clip that outlives the hour. */
   const onSave = useCallback(
     async (item: MediaItem) => {
+      if (mutations.current.has(item.key)) return;
+      mutations.current.add(item.key);
       const already = savedKeys.has(item.key);
+      try {
+        await requestJson(already ? `/api/saved?key=${encodeURIComponent(item.key)}` : "/api/saved", {
+          method: already ? "DELETE" : "POST",
+          headers: { "Content-Type": "application/json" },
+          ...(!already ? { body: JSON.stringify({ key: item.key }) } : {}),
+        });
       setSavedKeys((prev) => {
         const next = new Set(prev);
         if (already) next.delete(item.key);
@@ -227,16 +238,11 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
         return next;
       });
       haptic(prefs, 10);
-      if (already) {
-        await fetch(`/api/saved?key=${encodeURIComponent(item.key)}`, { method: "DELETE" });
-        flash("Removed from saved");
-      } else {
-        const res = await fetch("/api/saved", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ key: item.key }),
-        });
-        flash(res.ok ? "Saved for later" : "Could not save that one");
+        flash(already ? "Removed from saved" : "Saved for later");
+      } catch (err) {
+        flash((err as Error).message);
+      } finally {
+        mutations.current.delete(item.key);
       }
     },
     [savedKeys, prefs, flash],
@@ -246,7 +252,16 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   const onMute = useCallback(
     async (item: MediaItem) => {
       const creatorKey = `${item.provider}:${item.creatorHandle.toLowerCase()}`;
+      if (mutations.current.has(creatorKey)) return;
+      mutations.current.add(creatorKey);
       const already = mutedCreators.has(creatorKey);
+      try {
+        const query = `provider=${encodeURIComponent(item.provider)}&creatorHandle=${encodeURIComponent(item.creatorHandle)}`;
+        await requestJson(already ? `/api/muted?${query}` : "/api/muted", {
+          method: already ? "DELETE" : "POST",
+          headers: { "Content-Type": "application/json" },
+          ...(!already ? { body: JSON.stringify({ provider: item.provider, creatorHandle: item.creatorHandle }) } : {}),
+        });
       setMutedCreators((prev) => {
         const next = new Set(prev);
         if (already) next.delete(creatorKey);
@@ -254,34 +269,42 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
         return next;
       });
       haptic(prefs, 10);
-      const query = `provider=${encodeURIComponent(item.provider)}&creatorHandle=${encodeURIComponent(item.creatorHandle)}`;
-      const res = already
-        ? await fetch(`/api/muted?${query}`, { method: "DELETE" })
-        : await fetch("/api/muted", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider: item.provider, creatorHandle: item.creatorHandle }),
-          });
-      if (!res.ok) flash("Could not change that creator");
-      else flash(already ? `${item.creator} unmuted` : `You'll see less from ${item.creator}`);
+        flash(already ? `${item.creator} unmuted` : `You'll see less from ${item.creator}`);
+      } catch (err) {
+        flash((err as Error).message);
+      } finally {
+        mutations.current.delete(creatorKey);
+      }
     },
     [mutedCreators, prefs, flash],
   );
 
   // Flush "seen" marks in small batches so a fast swipe doesn't spam the API.
   useEffect(() => {
-    const id = setInterval(() => {
-      if (pendingRef.current.size === 0) return;
-      const keys = [...pendingRef.current];
-      pendingRef.current.clear();
+    const pending = pendingRef.current;
+    const flush = () => {
+      if (pending.size === 0) return;
+      const keys = [...pending];
+      pending.clear();
       void fetch("/api/feed/seen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keys }),
         keepalive: true,
-      });
-    }, 2500);
-    return () => clearInterval(id);
+      }).then((res) => {
+        if (!res.ok && res.status !== 423) keys.forEach((key) => pending.add(key));
+      }).catch(() => keys.forEach((key) => pending.add(key)));
+    };
+    const onHide = () => { if (document.hidden) flush(); };
+    const id = setInterval(flush, 2500);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+      flush();
+    };
   }, []);
 
   const onVisible = useCallback(
@@ -322,12 +345,12 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (closed) return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const target = e.target as HTMLElement | null;
+      if (e.altKey || e.ctrlKey || e.metaKey || target?.closest("input, textarea, select, button, a, [contenteditable=true]")) return;
       const go = (delta: number) => {
         const next = Math.max(0, Math.min(items.length, current + delta));
         listRef.current
-          ?.querySelector<HTMLElement>(`[data-index="${next}"], .end-slide`)
+          ?.querySelector<HTMLElement>(next === items.length ? ".end-slide" : `[data-index="${next}"]`)
           ?.scrollIntoView({ block: "start", behavior: scrollBehavior(prefs) });
       };
       if (e.key === "ArrowDown" || e.key === "j" || e.key === " ") {
@@ -417,7 +440,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
         </div>
       </header>
 
-      <div className="scroll-list" ref={listRef}>
+      <div className="scroll-list" ref={listRef} inert={closed}>
         {items.length === 0 && (
           <section className="slide end-slide">
             <div>
@@ -437,7 +460,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
             key={item.key}
             item={item}
             index={i}
-            active={i === current}
+            active={!closed && i === current}
             soundOn={soundOn}
             saved={savedKeys.has(item.key)}
             muted={mutedCreators.has(`${item.provider}:${item.creatorHandle.toLowerCase()}`)}
@@ -469,9 +492,9 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
       )}
 
       {closed && (
-        <div className="closing" role="dialog" aria-modal="true">
+        <div className="closing" role="dialog" aria-modal="true" aria-labelledby="closing-title">
           <div className="closing-inner">
-            <h2>That&apos;s your hour.</h2>
+            <h2 id="closing-title">That&apos;s your hour.</h2>
             <p className="closing-line">
               {watchedTotal > 0
                 ? `You watched ${watchedTotal} clip${watchedTotal === 1 ? "" : "s"}.`
@@ -490,6 +513,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
             <button
               className="btn"
               type="button"
+              autoFocus
               onClick={() => {
                 router.push("/feed");
                 router.refresh();

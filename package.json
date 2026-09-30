@@ -4,12 +4,14 @@
   "private": true,
   "description": "The Daily Scroll: one curated hour of short-form video from your connected social accounts.",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "dependencies": {

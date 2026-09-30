@@ -116,7 +116,7 @@ export interface Streak {
  */
 export function streakFor(userId: string, todayKey: string): Streak {
   const days = (
-    getDb().prepare("SELECT day_key FROM daily_feeds WHERE user_id = ? ORDER BY day_key DESC").all(userId) as Array<{
+    getDb().prepare("SELECT day_key FROM scroll_visits WHERE user_id = ? UNION SELECT day_key FROM daily_feeds WHERE user_id = ? ORDER BY day_key DESC").all(userId, userId) as Array<{
       day_key: string;
     }>
   ).map((r) => r.day_key);

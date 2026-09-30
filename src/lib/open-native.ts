@@ -12,7 +12,7 @@ import type { MediaItem } from "./providers/types";
  * permalink opens in a new tab.
  */
 export function openInNativeApp(item: MediaItem): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || item.demo) return;
   const platform = detectPlatform(navigator.userAgent);
   const scheme = platform === "other" ? null : nativeUrl(item, platform);
 

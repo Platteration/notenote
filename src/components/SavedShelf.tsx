@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { requestJson } from "@/lib/client-api";
 import { PlatformLogo } from "./PlatformLogo";
 import type { MutedCreator, SavedItem } from "@/lib/library";
 import { openInNativeApp } from "@/lib/open-native";
@@ -17,21 +18,29 @@ function when(ms: number): string {
 export function SavedShelf({ initial, initialMuted }: { initial: SavedItem[]; initialMuted: MutedCreator[] }) {
   const [saved, setSaved] = useState(initial);
   const [muted, setMuted] = useState(initialMuted);
+  const [error, setError] = useState<string | null>(null);
 
   async function remove(key: string) {
-    setSaved((list) => list.filter((s) => s.item.key !== key));
-    await fetch(`/api/saved?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    setError(null);
+    try {
+      await requestJson(`/api/saved?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+      setSaved((list) => list.filter((s) => s.item.key !== key));
+    } catch (err) { setError((err as Error).message); }
   }
 
   async function unmute(provider: string, creatorHandle: string) {
-    const res = await fetch(`/api/muted?provider=${encodeURIComponent(provider)}&creatorHandle=${encodeURIComponent(creatorHandle)}`, {
+    setError(null);
+    try {
+    const body = await requestJson<{ muted: MutedCreator[] }>(`/api/muted?provider=${encodeURIComponent(provider)}&creatorHandle=${encodeURIComponent(creatorHandle)}`, {
       method: "DELETE",
     });
-    if (res.ok) setMuted(((await res.json()) as { muted: MutedCreator[] }).muted);
+    setMuted(body.muted);
+    } catch (err) { setError((err as Error).message); }
   }
 
   return (
     <>
+      {error && <p className="error" role="alert">{error}</p>}
       {saved.length === 0 ? (
         <div className="card">
           <h2>Nothing saved yet</h2>
@@ -54,7 +63,7 @@ export function SavedShelf({ initial, initialMuted }: { initial: SavedItem[]; in
               </span>
             </div>
             <div className="provider-actions">
-              <a
+              {item.demo ? <span className="badge badge-demo">demo</span> : <a
                 className="btn btn-sm"
                 href={item.permalink}
                 onClick={(e) => {
@@ -65,7 +74,7 @@ export function SavedShelf({ initial, initialMuted }: { initial: SavedItem[]; in
                 rel="noopener noreferrer"
               >
                 Open
-              </a>
+              </a>}
               <button className="link-muted" type="button" onClick={() => remove(item.key)}>
                 remove
               </button>

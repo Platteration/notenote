@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS seen_items (
   seen_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, item_key)
 );
+CREATE TABLE IF NOT EXISTS scroll_visits (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day_key TEXT NOT NULL,
+  PRIMARY KEY (user_id, day_key)
+);
 CREATE TABLE IF NOT EXISTS saved_items (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   item_key TEXT NOT NULL,
@@ -163,6 +168,7 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, ddl: stri
 /** Bring databases created by earlier versions up to the current schema. */
 function migrate(db: DatabaseSync): void {
   ensureColumn(db, "settings", "prefs", "prefs TEXT NOT NULL DEFAULT '{}'");
+  db.exec("INSERT OR IGNORE INTO scroll_visits (user_id, day_key) SELECT user_id, day_key FROM daily_feeds");
 }
 
 export function now(): number {

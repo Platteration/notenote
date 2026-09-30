@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { requestJson } from "@/lib/client-api";
 
 export function SecurityPanel({ initialSessions }: { initialSessions: number }) {
   const [current, setCurrent] = useState("");
@@ -19,17 +20,12 @@ export function SecurityPanel({ initialSessions }: { initialSessions: number }) 
     }
     setBusy(true);
     setMessage(null);
-    const res = await fetch("/api/account/password", {
+    try {
+    const body = await requestJson<{ revokedSessions?: number }>("/api/account/password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ currentPassword: current, newPassword: next }),
     });
-    const body = (await res.json()) as { error?: string; revokedSessions?: number };
-    setBusy(false);
-    if (!res.ok) {
-      setMessage({ kind: "err", text: body.error ?? "Could not change the password" });
-      return;
-    }
     setCurrent("");
     setNext("");
     setConfirm("");
@@ -42,23 +38,22 @@ export function SecurityPanel({ initialSessions }: { initialSessions: number }) 
         ? `Password changed. ${revoked} other device${revoked === 1 ? " was" : "s were"} signed out.`
         : "Password changed.",
     });
+    } catch (err) { setMessage({ kind: "err", text: (err as Error).message }); }
+    finally { setBusy(false); }
   }
 
   async function signOutOthers() {
     setBusy(true);
     setMessage(null);
-    const res = await fetch("/api/account/sessions", { method: "DELETE" });
-    const body = (await res.json()) as { revoked?: number; sessions?: number };
-    setBusy(false);
-    if (!res.ok) {
-      setMessage({ kind: "err", text: "Could not sign out the other devices" });
-      return;
-    }
+    try {
+    const body = await requestJson<{ revoked?: number; sessions?: number }>("/api/account/sessions", { method: "DELETE" });
     setSessions(body.sessions ?? 1);
     setMessage({
       kind: "ok",
       text: body.revoked ? `Signed out ${body.revoked} other device${body.revoked === 1 ? "" : "s"}.` : "No other devices were signed in.",
     });
+    } catch (err) { setMessage({ kind: "err", text: (err as Error).message }); }
+    finally { setBusy(false); }
   }
 
   return (

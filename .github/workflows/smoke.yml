@@ -48,7 +48,7 @@ jobs:
             sleep 1
           done
 
-          bash scripts/smoke.sh
+          npm run smoke
 
       - name: Server log
         if: failure()
