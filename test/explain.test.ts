@@ -23,6 +23,13 @@ function item(overrides: Partial<MediaItem> & { provider: ProviderId; externalId
 
 const base = { size: 10, seed: "user:2026-09-06", now: NOW, seenKeys: new Set<string>() };
 
+/** The reason recorded for one picked clip; a pick without one fails here rather than later. */
+function reasonOf(result: { reasons: Record<string, CurationReason> }, key: string | undefined): CurationReason {
+  const found = key === undefined ? undefined : result.reasons[key];
+  if (!found) throw new Error(`no reason recorded for ${key}`);
+  return found;
+}
+
 function reason(overrides: Partial<CurationReason> = {}): CurationReason {
   return {
     engagement: 0.5,
@@ -49,7 +56,7 @@ describe("what the curation records", () => {
 
   it("records the components the scorer actually used, not a reconstruction", () => {
     const result = curate([item({ provider: "youtube", externalId: "only" })], { ...base, size: 1 });
-    const r = result.reasons["youtube:only"];
+    const r = reasonOf(result, "youtube:only");
 
     expect(r.engagement).toBeGreaterThanOrEqual(0);
     expect(r.engagement).toBeLessThanOrEqual(1);
@@ -64,7 +71,7 @@ describe("what the curation records", () => {
       item({ provider: "reddit", externalId: `r${i}`, creatorHandle: `c${i}` }),
     );
     const result = curate(items, { ...base, size: 5 });
-    expect(result.reasons[result.items[0].key].rankInPlatform).toBe(1);
+    expect(reasonOf(result, result.items[0]?.key).rankInPlatform).toBe(1);
   });
 
   it("notes when a higher-scoring clip was passed over to vary the creator", () => {
@@ -77,7 +84,7 @@ describe("what the curation records", () => {
     );
     const result = curate([...dominant, ...others], { ...base, size: 4 });
 
-    const diverted = result.items.filter((i) => result.reasons[i.key].divertedForDiversity);
+    const diverted = result.items.filter((i) => reasonOf(result, i.key).divertedForDiversity);
     expect(diverted.length).toBeGreaterThan(0);
     // The clip that was reached past the head is not from the creator who was capped.
     expect(diverted.every((i) => i.creatorHandle !== "megastar")).toBe(true);
@@ -86,7 +93,7 @@ describe("what the curation records", () => {
   it("counts how many clips from the same creator came before", () => {
     const items = Array.from({ length: 4 }, (_, i) => item({ provider: "twitch", externalId: `t${i}`, creatorHandle: "same" }));
     const result = curate(items, { ...base, size: 4 });
-    const counts = result.items.map((i) => result.reasons[i.key].creatorAlreadyPicked);
+    const counts = result.items.map((i) => reasonOf(result, i.key).creatorAlreadyPicked);
     expect(counts).toEqual([0, 1, 2, 3]);
   });
 });

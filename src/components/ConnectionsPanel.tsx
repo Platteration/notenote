@@ -18,6 +18,21 @@ const ERRORS: Record<string, string> = {
   "exchange-failed": "The platform rejected the token exchange. Check the server logs.",
 };
 
+/**
+ * The sentence shown for an `?error=` a callback (or anyone with a link) put in the URL.
+ *
+ * An own-property lookup, and a string or the fallback. `ERRORS` is an object literal, so a bare
+ * index answers `__proto__` with `Object.prototype` and `constructor` with a function — neither
+ * of them nullish, so `??` never fires and React is handed something it cannot render, which
+ * throws and takes the whole Connections panel down for that page load: no platform list, no
+ * connect or disconnect buttons, no credential form.
+ */
+export function connectErrorText(param: string): string {
+  const key = param.replace(/^[a-z]+-/, "");
+  const text = Object.prototype.hasOwnProperty.call(ERRORS, key) ? ERRORS[key] : undefined;
+  return typeof text === "string" ? text : "Something went wrong.";
+}
+
 function CredentialForm({
   connection,
   onConnected,
@@ -89,7 +104,7 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
   const [error, setError] = useState<string | null>(null);
 
   const errorParam = params.get("error");
-  const errorText = errorParam ? ERRORS[errorParam] ?? ERRORS[errorParam.replace(/^[a-z]+-/, "")] ?? "Something went wrong." : null;
+  const errorText = errorParam ? connectErrorText(errorParam) : null;
 
   async function disconnect(provider: string) {
     setBusy(provider);
@@ -163,14 +178,22 @@ export function ConnectionsPanel({ initial, window: win }: { initial: Connection
               <strong>
                 {c.name}{" "}
                 {c.connected ? (
-                  <span className={`badge ${c.demo ? "badge-demo" : "badge-live"}`}>{c.demo ? "demo" : "live"}</span>
+                  <span className={`badge ${c.needsReconnect ? "badge-off" : c.demo ? "badge-demo" : "badge-live"}`}>
+                    {c.needsReconnect ? "reconnect" : c.demo ? "demo" : "live"}
+                  </span>
                 ) : (
                   <span className="badge badge-off">
                     {c.demoOnly ? "no public api" : c.credentialsConfigured ? "ready" : "demo available"}
                   </span>
                 )}
               </strong>
-              <span>{c.connected ? c.displayName : c.capability}</span>
+              <span>
+              {c.needsReconnect
+                ? "This connection's stored tokens can't be read any more. Disconnect and connect again."
+                : c.connected
+                  ? c.displayName
+                  : c.capability}
+            </span>
             </div>
             {c.connected ? (
               <button className="btn btn-danger btn-sm" disabled={busy === c.provider} onClick={() => disconnect(c.provider)} type="button">

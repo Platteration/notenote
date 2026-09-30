@@ -78,7 +78,7 @@ try {
   assert.equal((await api("/api/saved")).saved.length, 1);
   const exported = await api("/api/account/export");
   assert.equal(exported.account.email, email);
-  assert.equal(exported.scrollVisits.length, 1);
+  assert.equal(exported.hourOpens.length, 1);
   assert.ok(!JSON.stringify(exported).includes("password_hash"));
   assert.equal(exported.settings.prefs.accent, "sky");
   await api("/api/settings", "PUT", { prefs: { accent: "apricot" } });
@@ -98,19 +98,25 @@ try {
   assert.equal((await api("/api/connections")).connections.find((c) => c.provider === "youtube").connected, false);
   console.log("PASS: password change, session revocation, logout/login, disconnect");
 
+  // Per-address throttling only runs when a trusted proxy names the client (TRUSTED_PROXY_HOPS),
+  // so the forwarding header counts for something only on a server started that way. Without
+  // one, the address-keyed buckets are skipped by design, and the attempts must still all fail.
   const attacker = client();
-  let throttled = false;
+  const statuses = [];
   for (let i = 0; i < 10; i++) {
     const response = await fetch(`${base}/api/auth/login`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.250" },
       body: JSON.stringify({ email: `unknown-${email}`, password: "wrong" }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (response.status === 429) { throttled = true; break; }
+    statuses.push(response.status);
+    if (response.status === 429) break;
   }
-  assert.ok(throttled);
+  assert.ok(statuses.every((s) => s === 401 || s === 429), `wrong passwords were not rejected: ${statuses}`);
   await attacker("/api/feed", "GET", undefined, 401);
-  console.log("PASS: sign-in throttling");
+  console.log(statuses.includes(429)
+    ? "PASS: sign-in throttling"
+    : "PASS: wrong passwords rejected; per-address throttling is off (set TRUSTED_PROXY_HOPS)");
 } finally {
   if (created) {
     await api("/api/account", "DELETE", { confirm: email });

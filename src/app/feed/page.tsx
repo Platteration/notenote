@@ -17,7 +17,7 @@ export default async function FeedPage() {
   if (feed.status === "locked") {
     return (
       <main className="shell">
-        <Nav signedIn />
+        <Nav signedIn email={user.email} />
         <LockedView initial={feed} prefs={prefs} />
       </main>
     );

@@ -4,23 +4,36 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  workflow_dispatch:
+  # Weekly, for a tree nobody pushes to: GitHub runs a schedule from the default branch
+  # only, where an advisory or a build that has rotted then shows within a week. Not at
+  # the top of the hour, a high-load time when scheduled runs can be delayed or dropped
+  # (CONVENTIONS.md, "CI").
+  schedule:
+    - cron: "17 6 * * 1"
 
-# A newer push to the same branch supersedes an in-flight run.
+# A newer run for the same ref supersedes an in-flight one. On the default branch the
+# weekly run shares the group with pushes; whichever is cancelled, the other tests the
+# branch's newest commit.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   check:
-    name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # node:sqlite, which the storage layer uses, needs Node 22.13+.
-          node-version: "22"
+          # .nvmrc pins the major. node:sqlite, which the storage layer uses, needs
+          # Node 22.13+; `engines.node` in package.json carries that tighter bound.
+          node-version-file: .nvmrc
           cache: npm
 
       - run: npm ci
@@ -31,8 +44,33 @@ jobs:
 
       - run: npm test
 
+      - run: npm run test:conventions
+
       - name: Build
         run: npm run build
         env:
           # The build renders pages that read settings, so it needs a session secret.
           SESSION_SECRET: ci-build-secret-not-a-real-deployment-key
+
+      # Boots the built app and walks the core flow with scripts/smoke.sh: the one check that
+      # runs against a real server rather than a module under test. `npm run test:e2e` builds,
+      # starts on a free port with a scratch DATA_DIR and its own session secret, polls
+      # /api/health, walks and stops the server by its recorded PID, printing the server log on
+      # failure, so this step and a developer run the same thing. It builds again; the Build
+      # step above is kept because it names a build failure as its own.
+      - run: npm run test:e2e
+
+  # Its own job, so that an advisory published against an unchanged tree turns audit red
+  # on the next run (on the default branch, the weekly one at the latest) and leaves check
+  # meaning what it always meant. npm audit reads the lockfile: no install.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - run: npm audit --omit=dev --audit-level=high

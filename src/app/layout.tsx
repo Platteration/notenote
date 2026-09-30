@@ -3,6 +3,7 @@ import { Sora } from "next/font/google";
 import "./globals.css";
 import { DEFAULT_ACCENT } from "@/lib/accent";
 import { currentUser } from "@/lib/session";
+import { reduceMotionAttribute } from "@/lib/motion";
 import { DEFAULT_PREFS, getSettings } from "@/lib/settings";
 
 const display = Sora({ subsets: ["latin"], weight: ["600", "700", "800"], variable: "--font-display-face", display: "swap" });
@@ -35,7 +36,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       className={display.variable}
       data-theme={prefs.theme === "system" ? undefined : prefs.theme}
       data-accent={prefs.accent === DEFAULT_ACCENT ? undefined : prefs.accent}
-      data-reduce-motion={prefs.reduceMotion ? "true" : undefined}
+      data-reduce-motion={reduceMotionAttribute(prefs.reduceMotion)}
       style={{ ["--font-display" as string]: `var(--font-display-face), ${"ui-sans-serif, system-ui, sans-serif"}` }}
     >
       <body>{children}</body>

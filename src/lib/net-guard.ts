@@ -25,7 +25,8 @@ export class BlockedHostError extends Error {
 function ipv4IsPrivate(ip: string): boolean {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = parts;
+  const a = parts[0]!;
+  const b = parts[1]!;
   if (a === 0) return true; // "this network"
   if (a === 10) return true; // private
   if (a === 127) return true; // loopback
@@ -47,7 +48,7 @@ function ipv4IsPrivate(ip: string): boolean {
  * IPv4 loopback address written the other way round.
  */
 export function expandIpv6(addr: string): number[] | null {
-  const cleaned = addr.toLowerCase().split("%")[0];
+  const cleaned = addr.toLowerCase().split("%")[0]!; // split always answers at least one part
   if (net.isIP(cleaned) !== 6) return null;
 
   // A trailing dotted quad occupies the final two groups.
@@ -55,9 +56,10 @@ export function expandIpv6(addr: string): number[] | null {
   const tail: number[] = [];
   const dotted = /:(\d+\.\d+\.\d+\.\d+)$/.exec(cleaned);
   if (dotted) {
-    const octets = dotted[1].split(".").map(Number);
-    tail.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
-    head = cleaned.slice(0, cleaned.length - dotted[1].length);
+    const quad = dotted[1]!; // the group is not optional, so a match always carries it
+    const octets = quad.split(".").map(Number);
+    tail.push((octets[0]! << 8) | octets[1]!, (octets[2]! << 8) | octets[3]!);
+    head = cleaned.slice(0, cleaned.length - quad.length);
   }
 
   const [before, after] = head.split("::") as [string, string | undefined];
@@ -73,19 +75,21 @@ export function expandIpv6(addr: string): number[] | null {
 
 function ipv6IsPrivate(ip: string): boolean {
   const g = expandIpv6(ip);
-  if (!g) return true;
+  if (!g) return true; // otherwise exactly eight groups, so every index below is present
 
   const leadingZeros = g.slice(0, 5).every((h) => h === 0);
   // An IPv4 address in IPv6 clothing is still an IPv4 address, however it is spelled.
   const isMapped = leadingZeros && g[5] === 0xffff;
   const isCompatible = leadingZeros && g[5] === 0;
   if (isMapped || isCompatible) {
-    const v4 = [g[6] >> 8, g[6] & 0xff, g[7] >> 8, g[7] & 0xff].join(".");
+    const hi = g[6]!;
+    const lo = g[7]!;
+    const v4 = [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
     // ::  and ::1 fall out of this as 0.0.0.0 and 0.0.0.1, both already refused.
     return ipv4IsPrivate(v4);
   }
 
-  const first = g[0];
+  const first = g[0]!;
   if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
   if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 link local
   if ((first & 0xff00) === 0xff00) return true; // ff00::/8 multicast

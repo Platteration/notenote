@@ -2,7 +2,8 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { requestJson, safeReturnPath } from "@/lib/client-api";
+import { requestJson } from "@/lib/client-api";
+import { safeNextPath } from "@/lib/safe-path";
 
 export function AuthForm() {
   const router = useRouter();
@@ -25,8 +26,7 @@ export function AuthForm() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, displayName, timezone }),
     });
-    const next = params.get("next");
-    router.push(safeReturnPath(next, mode === "signup" ? "/connect" : "/feed"));
+    router.push(safeNextPath(params.get("next"), mode === "signup" ? "/connect" : "/feed"));
     router.refresh();
     } catch (err) {
       setError((err as Error).message);

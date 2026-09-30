@@ -14,13 +14,13 @@ export const GET = withUser(async (_req, user) => {
     exportedAt: new Date().toISOString(),
     account: { id: user.id, email: user.email, displayName: user.display_name, createdAt: new Date(user.created_at).toISOString() },
     settings: getSettings(user.id),
-    scrollVisits: rows<Record<string, unknown>>("SELECT day_key FROM scroll_visits WHERE user_id = ? ORDER BY day_key"),
     connections: rows<Record<string, unknown>>(
       "SELECT provider, provider_user_id, display_name, demo, connected_at FROM connections WHERE user_id = ?",
     ),
     dailyFeeds: rows<Record<string, unknown>>("SELECT day_key, items_json, generated_at, opens_at, closes_at FROM daily_feeds WHERE user_id = ?").map(
       (f) => ({ ...f, items_json: undefined, feed: JSON.parse(String(f.items_json)) }),
     ),
+    hourOpens: rows<Record<string, unknown>>("SELECT day_key, opened_at FROM hour_opens WHERE user_id = ? ORDER BY day_key"),
     seenItems: rows<Record<string, unknown>>("SELECT item_key, seen_at FROM seen_items WHERE user_id = ?"),
     savedItems: rows<Record<string, unknown>>("SELECT item_key, item_json, saved_at FROM saved_items WHERE user_id = ?").map((s) => ({
       savedAt: s.saved_at,

@@ -8,8 +8,9 @@
  * keeps posts with a native video embed. Videos on Bluesky are capped at three minutes;
  * the API doesn't report duration, so the curation treats them as short-form.
  */
+import { UserFacingError } from "../errors";
 import { assertPublicHost } from "../net-guard";
-import { getJson } from "./http";
+import { getJson, ProviderHttpError } from "./http";
 import type { MediaItem, OAuthTokens, SocialProvider } from "./types";
 
 const DEFAULT_SERVICE = "https://bsky.social";
@@ -51,7 +52,7 @@ function unsupported(): never {
 /** The service host is kept in the connection's scope column as "service=<url>". */
 export function serviceFromScope(scope: string | null): string {
   const m = /service=(\S+)/.exec(scope ?? "");
-  return m ? m[1] : DEFAULT_SERVICE;
+  return m?.[1] ?? DEFAULT_SERVICE;
 }
 
 function normaliseService(input: string | undefined): string {
@@ -61,9 +62,9 @@ function normaliseService(input: string | undefined): string {
   try {
     url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
   } catch {
-    throw new Error("That service host isn't a valid address");
+    throw new UserFacingError("That service host isn't a valid address");
   }
-  if (url.protocol !== "https:") throw new Error("Service host must use https");
+  if (url.protocol !== "https:") throw new UserFacingError("Service host must use https");
   return url.origin;
 }
 
@@ -100,13 +101,21 @@ export const bluesky: SocialProvider = {
       const service = await checkedService(input.service);
       const identifier = (input.identifier ?? "").trim().replace(/^@/, "");
       const password = input.password ?? "";
-      if (!identifier || !password) throw new Error("Handle and app password are required");
+      if (!identifier || !password) throw new UserFacingError("Handle and app password are required");
       const session = await getJson<Session>("bluesky", `${service}/xrpc/com.atproto.server.createSession`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier, password }),
       });
-      if (session.error) throw new Error(`Bluesky: ${session.message ?? session.error}`);
+      // AT Protocol reports a refusal as a non-2xx, which getJson has already turned into a
+      // ProviderHttpError — but nothing stops a host answering 200 with an `error` key, and its
+      // `message` is then a sentence the host's owner wrote. Quoting it would put
+      // attacker-chosen text on the Connections page in the app's own voice, next to the field
+      // the person is typing an app password into. The detail goes to the log instead, and
+      // `credentialConnectError` supplies this app's own sentence.
+      if (session.error || !session.accessJwt) {
+        throw new ProviderHttpError("bluesky", 401, String(session.error ?? "no session in the reply"));
+      }
       return {
         accessToken: session.accessJwt,
         refreshToken: session.refreshJwt,

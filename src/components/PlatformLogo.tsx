@@ -1,4 +1,4 @@
-import { PROVIDER_META } from "@/lib/providers/meta";
+import { providerMeta } from "@/lib/providers/meta";
 import type { ProviderId } from "@/lib/providers/types";
 
 /**
@@ -17,7 +17,7 @@ export function PlatformLogo({
   className?: string;
   title?: string;
 }) {
-  const meta = PROVIDER_META[provider as ProviderId];
+  const meta = providerMeta(provider);
   if (!meta) return null;
   return (
     <span

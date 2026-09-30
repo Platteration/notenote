@@ -33,13 +33,15 @@ function luminance([r, g, b]: Rgb): number {
 }
 
 function contrast(fg: Rgb, bg: Rgb): number {
-  const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
-  return (hi + 0.05) / (lo + 0.05);
+  const a = luminance(fg);
+  const b = luminance(bg);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
 /** Flatten a translucent colour onto an opaque one, as the browser does. */
-function composite(fg: Rgb, alpha: number, bg: Rgb): Rgb {
-  return fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha))) as Rgb;
+function composite([fr, fg, fb]: Rgb, alpha: number, [br, bg, bb]: Rgb): Rgb {
+  const over = (top: number, under: number) => Math.round(top * alpha + under * (1 - alpha));
+  return [over(fr, br), over(fg, bg), over(fb, bb)];
 }
 
 /**
@@ -56,16 +58,26 @@ function ruleFor(selector: string): { tokens: Record<string, string>; prelude: s
   const close = CSS.indexOf("}", open);
   const body = CSS.slice(open, close);
   const tokens: Record<string, string> = {};
-  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) tokens[name] = value.trim();
+  // Neither group is optional, so every match carries both.
+  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) tokens[name!] = value!.trim();
   return { tokens, prelude: match[0] };
+}
+
+/** A token a block must define: its absence fails here, naming the block and the token. */
+function need(tokens: Record<string, string>, key: string, where: string): string {
+  const value = tokens[key];
+  if (value === undefined) throw new Error(`${where} is missing ${key}`);
+  return value;
 }
 
 function tokensOf(selector: string): Record<string, string> {
   return ruleFor(selector).tokens;
 }
 
-function pick(tokens: Record<string, string>, names: string[]): Record<string, string> {
-  return Object.fromEntries(names.map((n) => [n, tokens[n]]));
+function pick(tokens: Record<string, string>, names: string[]): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const n of names) out[n] = tokens[n];
+  return out;
 }
 
 /**
@@ -103,11 +115,14 @@ const SCROLL: Rgb = [0, 0, 0];
 
 describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accentSelector }) => {
   const tokens = tokensOf(selector);
+  const required = (key: string): string => need(tokens, key, name);
   // The wireframe theme draws cards as outlines, so text sits on the page itself.
-  const surface = parseHex(tokens["--bg-elev"]?.startsWith("#") ? tokens["--bg-elev"] : tokens["--bg"]);
-  const page = parseHex(tokens["--bg"]);
+  const elevated = tokens["--bg-elev"];
+  const surface = parseHex(elevated?.startsWith("#") ? elevated : required("--bg"));
+  const page = parseHex(required("--bg"));
   // Inputs sit on the raised surface; the wire theme leaves them transparent on the page.
-  const focusSurface = tokens["--bg-elev-2"]?.startsWith("#") ? parseHex(tokens["--bg-elev-2"]) : page;
+  const raised = tokens["--bg-elev-2"];
+  const focusSurface = raised?.startsWith("#") ? parseHex(raised) : page;
 
   it("defines every colour token the themes share", () => {
     for (const token of ["--bg", "--fg", "--fg-muted", "--fg-faint", ...ACCENT_TOKENS, ...BADGES.map((b) => b.ink)]) {
@@ -116,7 +131,7 @@ describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accent
   });
 
   it.each(["--fg", "--fg-muted", "--fg-faint"])("%s clears WCAG AA on both surfaces", (token) => {
-    const ink = parseHex(tokens[token]);
+    const ink = parseHex(required(token));
     expect(contrast(ink, surface), `${name} ${token} on the card surface`).toBeGreaterThanOrEqual(AA_NORMAL);
     expect(contrast(ink, page), `${name} ${token} on the page`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
@@ -124,7 +139,7 @@ describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accent
   it.each(BADGES)("$ink clears WCAG AA on its own tinted pill", ({ ink, tint, alpha }) => {
     // Most themes tint the pill; a theme that draws badges as outlines leaves the surface bare.
     const pill = badges === "outline" ? surface : composite(tint, alpha, surface);
-    expect(contrast(parseHex(tokens[ink]), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(contrast(parseHex(required(ink)), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
   /**
@@ -144,20 +159,21 @@ describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accent
     }
   });
 
-  it.each(accents)("$id keeps primary-button ink (and the switch thumb) legible on both ends of the gradient", ({ tokens: t }) => {
-    const ink = parseHex(t["--accent-ink"]);
-    expect(contrast(ink, parseHex(t["--accent"]))).toBeGreaterThanOrEqual(AA_NORMAL);
-    expect(contrast(ink, parseHex(t["--accent-2"]))).toBeGreaterThanOrEqual(AA_NORMAL);
+  it.each(accents)("$id keeps primary-button ink (and the switch thumb) legible on both ends of the gradient", ({ id, tokens: t }) => {
+    const where = `${name}/${id}`;
+    const ink = parseHex(need(t, "--accent-ink", where));
+    expect(contrast(ink, parseHex(need(t, "--accent", where)))).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(contrast(ink, parseHex(need(t, "--accent-2", where)))).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
-  it.each(accents)("$id is a visible focus border on a field", ({ tokens: t }) => {
+  it.each(accents)("$id is a visible focus border on a field", ({ id, tokens: t }) => {
     // The accent border is the only focus indicator on text fields, so it must clear 3:1.
-    expect(contrast(parseHex(t["--accent"]), focusSurface)).toBeGreaterThanOrEqual(AA_LARGE);
+    expect(contrast(parseHex(need(t, "--accent", `${name}/${id}`)), focusSurface)).toBeGreaterThanOrEqual(AA_LARGE);
   });
 
-  it.each(accents)("$id pair is visible on the card, the page and the black scroll", ({ tokens: t }) => {
+  it.each(accents)("$id pair is visible on the card, the page and the black scroll", ({ id, tokens: t }) => {
     for (const token of ["--accent", "--accent-2"]) {
-      const colour = parseHex(t[token]);
+      const colour = parseHex(need(t, token, `${name}/${id}`));
       expect(contrast(colour, surface), `${token} on the card`).toBeGreaterThanOrEqual(AA_LARGE);
       expect(contrast(colour, page), `${token} on the page`).toBeGreaterThanOrEqual(AA_LARGE);
       expect(contrast(colour, SCROLL), `${token} on the scroll`).toBeGreaterThanOrEqual(AA_LARGE);
@@ -166,8 +182,8 @@ describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accent
 
   if (badges === "outline") {
     // Wire uses the accent as button and segmented-control text, not as a fill.
-    it.each(accents)("$id is legible as text on the wire ground", ({ tokens: t }) => {
-      expect(contrast(parseHex(t["--accent"]), page)).toBeGreaterThanOrEqual(AA_NORMAL);
+    it.each(accents)("$id is legible as text on the wire ground", ({ id, tokens: t }) => {
+      expect(contrast(parseHex(need(t, "--accent", `${name}/${id}`)), page)).toBeGreaterThanOrEqual(AA_NORMAL);
     });
   }
 

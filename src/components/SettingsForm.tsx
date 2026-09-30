@@ -5,9 +5,10 @@ import { useMemo, useState } from "react";
 import { Countdown } from "./Countdown";
 import { NotificationSetting } from "./NotificationSetting";
 import { SecurityPanel } from "./SecurityPanel";
-import { chime, haptic } from "@/lib/effects";
+import { chime, haptic, useReduceMotion } from "@/lib/effects";
 import { ACCENT_CATALOGUE, DEFAULT_ACCENT } from "@/lib/accent";
 import { requestJson } from "@/lib/client-api";
+import { REDUCE_MOTION_LABELS, REDUCE_MOTION_NOTES, REDUCE_MOTION_OPTIONS, reduceMotionAttribute } from "@/lib/motion";
 import type { Prefs, Settings } from "@/lib/settings";
 import { THEME_CATALOGUE, THEME_NOTES, themeMeta, type ThemeMeta } from "@/lib/theme";
 import type { DailyWindow } from "@/lib/window";
@@ -44,6 +45,18 @@ function Switch({
   );
 }
 
+/** The root attributes the stylesheet reads, so a change is visible before the server has it. */
+function applyToPage(patch: Partial<Prefs>) {
+  const root = document.documentElement;
+  const set = (name: string, value: string | undefined) => {
+    if (value === undefined) root.removeAttribute(name);
+    else root.setAttribute(name, value);
+  };
+  if (patch.theme !== undefined) set("data-theme", patch.theme === "system" ? undefined : patch.theme);
+  if (patch.accent !== undefined) set("data-accent", patch.accent === DEFAULT_ACCENT ? undefined : patch.accent);
+  if (patch.reduceMotion !== undefined) set("data-reduce-motion", reduceMotionAttribute(patch.reduceMotion));
+}
+
 export function SettingsForm({
   initial,
   initialWindow,
@@ -68,12 +81,13 @@ export function SettingsForm({
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefsBusy, setPrefsBusy] = useState(false);
-  /** Appearance errors render beside the control they came from, not in the hour form. */
-  const [prefsMsg, setPrefsMsg] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  /** Appearance errors render in this card, beside the control they came from, not in the hour form. */
+  const [prefsError, setPrefsError] = useState<string | null>(null);
+  const motionReduced = useReduceMotion(prefs.reduceMotion);
 
   const zones = useMemo(() => {
     const list = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : ["UTC"];
@@ -91,7 +105,7 @@ export function SettingsForm({
   async function updatePrefs(patch: Partial<Prefs>) {
     if (prefsBusy) return;
     setPrefsBusy(true);
-    setPrefsMsg(null);
+    setPrefsError(null);
     try {
     await requestJson("/api/settings", {
       method: "PUT",
@@ -100,24 +114,30 @@ export function SettingsForm({
     });
     const next = { ...prefs, ...patch };
     setPrefs(next);
-    const root = document.documentElement;
-    if (patch.theme !== undefined) {
-      if (patch.theme === "system") root.removeAttribute("data-theme");
-      else root.setAttribute("data-theme", patch.theme);
-    }
-    if (patch.accent !== undefined) {
-      if (patch.accent === DEFAULT_ACCENT) root.removeAttribute("data-accent");
-      else root.setAttribute("data-accent", patch.accent);
-    }
-    if (patch.reduceMotion !== undefined) {
-      if (patch.reduceMotion) root.setAttribute("data-reduce-motion", "true");
-      else root.removeAttribute("data-reduce-motion");
-    }
+    applyToPage(patch);
     if (patch.haptics) haptic(next, 12);
     if (patch.sound) chime(next, "open");
     } catch (err) {
-      setPrefsMsg((err as Error).message);
+      setPrefsError((err as Error).message);
     } finally { setPrefsBusy(false); }
+  }
+
+  /**
+   * Back to the defaults, after a confirmation: there is no undo for a preference, and the
+   * server resets the record as a whole. Only this card's settings are touched; the hour,
+   * connections and history are not preferences.
+   */
+  async function resetPrefs() {
+    if (!window.confirm("Reset appearance, motion, haptics and sound to their defaults? Your hour, connections and history are not affected.")) return;
+    setPrefsError(null);
+    const res = await fetch("/api/settings/prefs", { method: "DELETE" });
+    if (!res.ok) {
+      setPrefsError("Could not reset the preferences");
+      return;
+    }
+    const { prefs: next } = (await res.json()) as { prefs: Prefs };
+    setPrefs(next);
+    applyToPage(next);
   }
 
   async function save(e: React.FormEvent) {
@@ -236,13 +256,23 @@ export function SettingsForm({
             ))}
           </div>
         </div>
+        <div style={{ marginTop: 18 }}>
+          <span className="pref-heading">
+            Reduce motion
+          </span>
+          <div className="segmented" role="group" aria-label="Reduce motion">
+            {REDUCE_MOTION_OPTIONS.map((m) => (
+              <button key={m} type="button" aria-pressed={prefs.reduceMotion === m} onClick={() => void updatePrefs({ reduceMotion: m })}>
+                {REDUCE_MOTION_LABELS[m]}
+              </button>
+            ))}
+          </div>
+          <p className="hint" style={{ marginTop: 8 }}>
+            {REDUCE_MOTION_NOTES[prefs.reduceMotion]}
+            {prefs.reduceMotion === "system" && (motionReduced ? " Right now that means less motion." : " Right now that means full motion.")}
+          </p>
+        </div>
         <div style={{ marginTop: 8 }}>
-          <Switch
-            label="Reduce motion"
-            description="Turn off gradient shifts, smooth scrolling and transitions."
-            checked={prefs.reduceMotion}
-            onChange={(v) => void updatePrefs({ reduceMotion: v })}
-          />
           <Switch
             label="Haptics"
             description="A light tap as each clip passes, and a nudge when the final minute starts."
@@ -256,7 +286,12 @@ export function SettingsForm({
             onChange={(v) => void updatePrefs({ sound: v })}
           />
         </div>
-        {prefsMsg && <p className="error" role="alert">{prefsMsg}</p>}
+        {prefsError && <p className="error" role="alert">{prefsError}</p>}
+        <div className="cred-actions" style={{ marginTop: 14 }}>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => void resetPrefs()}>
+            Reset to defaults
+          </button>
+        </div>
       </div>
 
       <div className="card">

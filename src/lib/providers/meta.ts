@@ -47,8 +47,24 @@ export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
   bluesky: { name: "Bluesky", color: "#1185fe", logoColor: "#ffffff", wireColor: "#6fc6ff", logoPath: siBluesky.path },
 };
 
+/**
+ * Metadata for a platform id, or null.
+ *
+ * An own-property lookup, never a bare index: `PROVIDER_META` is an object literal, so every
+ * name on `Object.prototype` — `constructor`, `__proto__`, `toString` — answers a bare index
+ * with something truthy, and these ids arrive from a URL segment, a stored row and a component
+ * prop. A caller then has an object that is not a platform and renders nothing, or throws.
+ */
+export function providerMeta(id: string): ProviderMeta | null {
+  return isProviderId(id) ? PROVIDER_META[id] : null;
+}
+
+function isProviderId(id: string): id is ProviderId {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_META, id);
+}
+
 export function providerName(id: string): string {
-  return (PROVIDER_META as Record<string, ProviderMeta>)[id]?.name ?? id;
+  return providerMeta(id)?.name ?? id;
 }
 
 export type Platform = "ios" | "android" | "other";

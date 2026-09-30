@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { assert, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-push-tests";
@@ -18,7 +18,9 @@ const push = await import("@/lib/push");
 const { MAX_SUBSCRIPTIONS_PER_USER } = push;
 
 let userId: string;
-const sub = (n: number) => ({ endpoint: `https://push.example.com/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
+// An address literal, because the send path checks the destination again before every send:
+// a name here would need a DNS lookup in a test run, and would mean the guard was not exercised.
+const sub = (n: number) => ({ endpoint: `https://93.184.216.34/push/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
 
 beforeAll(async () => {
   userId = (await signUp({ email: "push@example.com", displayName: "Push", password: "password123" })).id;
@@ -55,7 +57,72 @@ describe("subscription validation", () => {
     push.saveSubscription(userId, { ...sub(1), keys: { p256dh: "new", auth: "new" } });
     const rows = push.subscriptionsFor(userId);
     expect(rows).toHaveLength(1);
-    expect(rows[0].p256dh).toBe("new");
+    expect(rows[0]!.p256dh).toBe("new");
+  });
+});
+
+describe("one device belongs to one account", () => {
+  it("refuses to move a subscription to another account", async () => {
+    const attacker = (await signUp({ email: "attacker@example.com", displayName: "A", password: "password123" })).id;
+    expect(push.saveSubscription(userId, sub(1))).toBe(true);
+
+    // Learning someone else's endpoint — a shared browser profile, a copied service-worker
+    // registration, a support log — used to be enough to take the row over: the victim
+    // silently stopped receiving their own notification and the attacker's arrived instead.
+    expect(push.saveSubscription(attacker, sub(1))).toBe(false);
+    expect(push.subscriptionsFor(userId).map((s) => s.endpoint)).toEqual([sub(1).endpoint]);
+    expect(push.subscriptionsFor(attacker)).toHaveLength(0);
+
+    sendNotification.mockResolvedValue({});
+    expect((await push.notifyHourOpen(attacker, "2026-09-06", 60)).sent).toBe(0);
+    expect((await push.notifyHourOpen(userId, "2026-09-06", 60)).sent).toBe(1);
+  });
+
+  it("still lets the same account re-register the same device", () => {
+    expect(push.saveSubscription(userId, sub(1))).toBe(true);
+    expect(push.saveSubscription(userId, { ...sub(1), keys: { p256dh: "rotated", auth: "rotated" } })).toBe(true);
+    expect(push.subscriptionsFor(userId)[0]?.p256dh).toBe("rotated");
+  });
+});
+
+describe("where the server is willing to send", () => {
+  it("refuses an endpoint on the network the server can reach and the user cannot", async () => {
+    // The daily cron POSTs to whatever was stored, so this is the second destination in the
+    // app a user picks — the Bluesky PDS being the first — and it gets the same guard.
+    for (const endpoint of [
+      "https://localhost/push",
+      "https://127.0.0.1/push",
+      "https://[::1]/push",
+      "https://169.254.169.254/latest/meta-data/",
+      "https://10.0.0.5:8443/admin",
+      "not a url at all",
+    ]) {
+      await expect(push.isReachableEndpoint(endpoint)).resolves.toBe(false);
+    }
+  });
+
+  it("accepts a publicly routable one", async () => {
+    // An address literal, so the check is exercised without a DNS lookup in a test run.
+    await expect(push.isReachableEndpoint("https://93.184.216.34/wp/abc")).resolves.toBe(true);
+  });
+
+  it("checks again at send time, because a name that resolved publicly can be re-pointed", async () => {
+    // Written straight into the table: this is the state an account reaches by registering a
+    // name it controls and then pointing it at an internal address, which registration cannot
+    // see. The daily job reads this row every minute until it succeeds.
+    getDb()
+      .prepare("INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run("https://169.254.169.254/latest/meta-data/", userId, "p", "a", 1000);
+    sendNotification.mockResolvedValue({});
+
+    const result = await push.notifyHourOpen(userId, "2026-09-06", 60);
+
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+    // Not deleted either: a name that fails to resolve for a minute is not consent to forget a
+    // device, and nothing was sent to it.
+    expect(push.subscriptionsFor(userId)).toHaveLength(1);
   });
 });
 
@@ -85,7 +152,9 @@ describe("daily delivery", () => {
     push.saveSubscription(userId, sub(1));
     sendNotification.mockResolvedValue({});
     await push.notifyHourOpen(userId, "2026-09-06", 60);
-    const payload = JSON.parse(sendNotification.mock.calls[0][1] as string);
+    const call = sendNotification.mock.calls[0];
+    assert.isDefined(call, "a notification was sent");
+    const payload = JSON.parse(call[1] as string);
     expect(payload.body).toContain("60 minutes");
     expect(payload.url).toBe("/feed");
     expect(payload.tag).toBe("daily-scroll-2026-09-06");

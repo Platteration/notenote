@@ -1,7 +1,7 @@
 /**
  * "Less like this": muting a creator keeps them out of every future feed.
  */
-import { json, readJson, withUser } from "@/lib/api";
+import { errorResponse, json, readJson, withUser } from "@/lib/api";
 import { listMuted, muteCreator, unmuteCreator } from "@/lib/library";
 import { PROVIDER_IDS, type ProviderId } from "@/lib/providers/types";
 
@@ -16,7 +16,7 @@ export const POST = withUser(async (req, user) => {
   try {
     muteCreator(user.id, provider, handle);
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : "Could not mute that creator" }, { status: 400 });
+    return errorResponse(err);
   }
   return json({ muted: listMuted(user.id) });
 });

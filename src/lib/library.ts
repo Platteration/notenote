@@ -6,6 +6,7 @@
  * creator is the other direction: an explicit "less like this" that curation respects.
  */
 import { getDb, now, type DailyFeedRow } from "./db";
+import { UserFacingError } from "./errors";
 import type { MediaItem, ProviderId } from "./providers/types";
 
 export interface SavedItem {
@@ -28,7 +29,7 @@ function findInFeeds(userId: string, itemKey: string): MediaItem | null {
 
 export function saveItem(userId: string, itemKey: string, at: number = now()): SavedItem {
   const item = findInFeeds(userId, itemKey);
-  if (!item) throw new Error("That clip isn't in any of your recent feeds");
+  if (!item) throw new UserFacingError("That clip isn't in any of your recent feeds");
   getDb()
     .prepare(
       `INSERT INTO saved_items (user_id, item_key, item_json, saved_at) VALUES (?, ?, ?, ?)
@@ -67,7 +68,7 @@ export function muteCreator(userId: string, provider: ProviderId, creatorHandle:
     getDb().prepare("SELECT COUNT(*) AS c FROM muted_creators WHERE user_id = ?").get(userId) as { c: number }
   ).c;
   if (existing >= MAX_MUTED_CREATORS) {
-    throw new Error(`You can mute up to ${MAX_MUTED_CREATORS} creators. Unmute someone first.`);
+    throw new UserFacingError(`You can mute up to ${MAX_MUTED_CREATORS} creators. Unmute someone first.`);
   }
   getDb()
     .prepare(
@@ -102,6 +103,20 @@ export function mutedSet(userId: string): Set<string> {
   return new Set(listMuted(userId).map((m) => `${m.provider}:${m.creatorHandle}`));
 }
 
+/**
+ * Record that the user was here while their hour was open.
+ *
+ * Deliberately separate from daily_feeds: that table is the frozen feed and is swept a day
+ * after the hour closes, whereas showing up is a fact worth keeping. Called on every request
+ * inside the window, not only the one that generates the feed, so a day still counts when the
+ * feed was already built.
+ */
+export function recordHourOpen(userId: string, dayKey: string, at: number = now()): void {
+  getDb()
+    .prepare("INSERT INTO hour_opens (user_id, day_key, opened_at) VALUES (?, ?, ?) ON CONFLICT(user_id, day_key) DO NOTHING")
+    .run(userId, dayKey, at);
+}
+
 export interface Streak {
   /** Consecutive days, ending today or yesterday, on which the hour was opened. */
   current: number;
@@ -110,29 +125,39 @@ export interface Streak {
   total: number;
 }
 
+/** The `YYYY-MM-DD` key of the day before `key`, or null when `key` is not a date. */
+function dayBefore(key: string): string | null {
+  const [y, m, d] = key.split("-").map(Number);
+  if (y === undefined || m === undefined || d === undefined) return null;
+  const prev = new Date(Date.UTC(y, m - 1, d - 1));
+  return Number.isNaN(prev.getTime()) ? null : prev.toISOString().slice(0, 10);
+}
+
 /**
  * A streak of showing up, not of watching more. The hour is fixed either way, so this
  * can't be inflated by scrolling harder — only by keeping the ritual.
  */
 export function streakFor(userId: string, todayKey: string): Streak {
+  // Counted from hour_opens, not daily_feeds: the housekeeping sweep drops a feed a day
+  // after its hour closes, so a streak read from those rows could never pass two.
+  // A row whose key is not a date sits in no run, so it is left out rather than allowed to
+  // throw: this is read on every request while the hour is shut, and one such row would
+  // otherwise fail each of them for as long as the row is there.
   const days = (
-    getDb().prepare("SELECT day_key FROM scroll_visits WHERE user_id = ? UNION SELECT day_key FROM daily_feeds WHERE user_id = ? ORDER BY day_key DESC").all(userId, userId) as Array<{
+    getDb().prepare("SELECT day_key FROM hour_opens WHERE user_id = ? ORDER BY day_key DESC").all(userId) as Array<{
       day_key: string;
     }>
-  ).map((r) => r.day_key);
+  )
+    .map((r) => r.day_key)
+    .filter((key) => dayBefore(key) !== null);
   if (days.length === 0) return { current: 0, longest: 0, total: 0 };
 
   const set = new Set(days);
-  const dayBefore = (key: string) => {
-    const [y, m, d] = key.split("-").map(Number);
-    const prev = new Date(Date.UTC(y, m - 1, d - 1));
-    return prev.toISOString().slice(0, 10);
-  };
 
   // The run may end today or yesterday; a gap of more than a day breaks it.
   let cursor = set.has(todayKey) ? todayKey : dayBefore(todayKey);
   let current = 0;
-  while (set.has(cursor)) {
+  while (cursor !== null && set.has(cursor)) {
     current++;
     cursor = dayBefore(cursor);
   }

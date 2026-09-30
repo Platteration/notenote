@@ -1,7 +1,7 @@
 /**
  * The saved shelf. Reachable at any hour: the scroll ends, but nothing good is lost.
  */
-import { json, readJson, withUser } from "@/lib/api";
+import { errorResponse, json, readJson, withUser } from "@/lib/api";
 import { listSaved, saveItem, unsaveItem } from "@/lib/library";
 
 export const GET = withUser(async (_req, user) => json({ saved: listSaved(user.id) }));
@@ -13,7 +13,7 @@ export const POST = withUser(async (req, user) => {
     const saved = saveItem(user.id, body.key);
     return json({ saved });
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : "Could not save" }, { status: 400 });
+    return errorResponse(err);
   }
 });
 

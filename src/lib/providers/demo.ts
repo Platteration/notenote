@@ -113,7 +113,7 @@ const TOPICS = [
   "a lamp that turns on when you whistle",
 ];
 
-const PALETTES = [
+const PALETTES: Array<[string, string]> = [
   ["#ff5e7e", "#7a1fff"],
   ["#00d4ff", "#0a3d91"],
   ["#ffb347", "#ff2d55"],
@@ -125,7 +125,7 @@ const PALETTES = [
 ];
 
 function poster(seedNum: number, provider: ProviderId, title: string): string {
-  const [a, b] = PALETTES[seedNum % PALETTES.length];
+  const [a, b] = PALETTES[seedNum % PALETTES.length]!;
   const angle = (seedNum * 37) % 360;
   const words = title.split(" ").slice(0, 4).join(" ");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="540" height="960" viewBox="0 0 540 960">
@@ -180,8 +180,9 @@ export function demoItems(provider: ProviderId, userId: string, now: number, cou
   const creators = CREATORS[provider];
   const items: MediaItem[] = [];
   for (let i = 0; i < count; i++) {
-    const creator = creators[Math.floor(rand() * creators.length)];
-    const topic = TOPICS[Math.floor(rand() * TOPICS.length)];
+    // rand() is in [0, 1), so each pick is an index of its non-empty list.
+    const creator = creators[Math.floor(rand() * creators.length)]!;
+    const topic = TOPICS[Math.floor(rand() * TOPICS.length)]!;
     const seedNum = Math.floor(rand() * 1_000_000);
     const externalId = `${dateKey.replace(/-/g, "")}${String(seedNum).padStart(6, "0")}`;
     const ageHours = rand() * 24 * 6; // within the last six days

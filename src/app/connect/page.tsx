@@ -15,7 +15,7 @@ export default async function ConnectPage() {
   const win = windowFor(user.id);
   return (
     <main className="shell">
-      <Nav signedIn />
+      <Nav signedIn email={user.email} />
       <section className="hero" style={{ paddingTop: 16 }}>
         <h1 style={{ fontSize: 32 }}>Connections</h1>
         <p>Everything you connect feeds one curated hour. Disconnect any time.</p>

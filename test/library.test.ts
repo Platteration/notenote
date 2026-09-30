@@ -5,9 +5,9 @@ process.env.SESSION_SECRET = "test-secret-for-library-tests";
 
 const { signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
-const { MAX_MUTED_CREATORS, listMuted, listSaved, muteCreator, mutedSet, saveItem, streakFor, unmuteCreator, unsaveItem } =
+const { MAX_MUTED_CREATORS, listMuted, listSaved, muteCreator, mutedSet, recordHourOpen, saveItem, streakFor, unmuteCreator, unsaveItem } =
   await import("@/lib/library");
-const { markSeen } = await import("@/lib/feed");
+const { getFeed, markSeen, purgeExpired } = await import("@/lib/feed");
 const { curate } = await import("@/lib/curation");
 const { demoItems } = await import("@/lib/providers/demo");
 
@@ -30,11 +30,11 @@ describe("saved shelf", () => {
   it("saves a clip from one of the user's own feeds and keeps its content", () => {
     const items = demoItems("youtube", userId, NOW, 3);
     seedFeed("2026-09-06", items);
-    const saved = saveItem(userId, items[0].key, NOW);
-    expect(saved.item.title).toBe(items[0].title);
+    const saved = saveItem(userId, items[0]!.key, NOW);
+    expect(saved.item.title).toBe(items[0]!.title);
     const list = listSaved(userId);
     expect(list).toHaveLength(1);
-    expect(list[0].item.permalink).toBe(items[0].permalink);
+    expect(list[0]!.item.permalink).toBe(items[0]!.permalink);
   });
 
   it("refuses a key that isn't in any of the user's feeds", () => {
@@ -43,7 +43,7 @@ describe("saved shelf", () => {
 
   it("removes a saved clip", () => {
     const items = demoItems("youtube", userId, NOW, 3);
-    unsaveItem(userId, items[0].key);
+    unsaveItem(userId, items[0]!.key);
     expect(listSaved(userId)).toHaveLength(0);
   });
 });
@@ -68,7 +68,7 @@ describe("muted creators", () => {
 
   it("keeps muted creators out of the curated feed", () => {
     const items = demoItems("youtube", userId, NOW, 30);
-    const target = items[0].creatorHandle;
+    const target = items[0]!.creatorHandle;
     const base = { size: 20, seed: "s", now: NOW, seenKeys: new Set<string>() };
     const before = curate(items, base).items.filter((i) => i.creatorHandle === target).length;
     const after = curate(items, { ...base, mutedCreators: new Set([`youtube:${target.toLowerCase()}`]) }).items;
@@ -93,19 +93,20 @@ describe("recording what was watched", () => {
   it("keeps the real keys and drops the invented ones in the same call", () => {
     const items = demoItems("tiktok", userId, NOW, 3);
     seedFeed("2026-09-11", items);
-    expect(markSeen(userId, [items[0].key, "tiktok:not-real"], NOW)).toBe(1);
+    expect(markSeen(userId, [items[0]!.key, "tiktok:not-real"], NOW)).toBe(1);
   });
 });
 
 describe("streak", () => {
-  // Streaks are computed from the feed rows, so start from a known set rather than
+  // Showing up is recorded in its own ledger, so start from a known set rather than
   // depending on whatever earlier tests happened to seed.
   beforeAll(() => {
     getDb().prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    getDb().prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
   });
 
   it("counts consecutive days ending today", () => {
-    for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) seedFeed(day, []);
+    for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) recordHourOpen(userId, day, NOW);
     const s = streakFor(userId, "2026-09-06");
     expect(s.current).toBe(3);
     expect(s.total).toBe(3);
@@ -117,10 +118,71 @@ describe("streak", () => {
   });
 
   it("reports the longest run across gaps", () => {
-    seedFeed("2026-08-01", []);
+    recordHourOpen(userId, "2026-08-01", NOW);
     const s = streakFor(userId, "2026-09-06");
     expect(s.longest).toBe(3);
     expect(s.total).toBe(4);
+  });
+
+  it("survives the sweep that removes the feeds those days produced", () => {
+    // The regression: streaks used to be read from daily_feeds, which purgeExpired empties a
+    // day after each hour closes, so no ordinary user could ever show more than two days.
+    // The bound comes from the sweep's own threshold rather than from the streak code.
+    const db = getDb();
+    db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    const dayMs = 86_400_000;
+    for (let back = 0; back < 4; back++) {
+      const closes = NOW - back * dayMs;
+      seedFeed(new Date(closes).toISOString().slice(0, 10), []);
+      recordHourOpen(userId, new Date(closes).toISOString().slice(0, 10), closes);
+    }
+    const swept = purgeExpired(NOW + 2 * dayMs);
+    expect(swept.feeds).toBeGreaterThan(0);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM daily_feeds WHERE user_id = ?").get(userId)).toEqual({ c: 0 });
+
+    const todayKey = new Date(NOW).toISOString().slice(0, 10);
+    const s = streakFor(userId, todayKey);
+    expect(s.current).toBe(4);
+    expect(s.longest).toBeGreaterThanOrEqual(4);
+  });
+
+  it("records the open on every request inside the hour, not only the one that builds the feed", async () => {
+    // The ledger has to be written where the user turns up. The feed row is created once a
+    // day, and the prewarm cron builds items without creating one at all, so hanging the
+    // streak off that row is what made it wrong in the first place.
+    const db = getDb();
+    db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+    const inTheHour = Date.UTC(2026, 8, 6, 20, 30); // default window opens at 20:00 UTC
+
+    expect((await getFeed(userId, inTheHour)).status).toBe("open");
+    expect(db.prepare("SELECT day_key FROM hour_opens WHERE user_id = ?").all(userId)).toEqual([{ day_key: "2026-09-06" }]);
+
+    // Second visit of the same hour: the feed row already exists, so nothing is inserted there.
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+    expect((await getFeed(userId, inTheHour + 60_000)).status).toBe("open");
+    expect(db.prepare("SELECT day_key FROM hour_opens WHERE user_id = ?").all(userId)).toEqual([{ day_key: "2026-09-06" }]);
+
+    db.prepare("DELETE FROM daily_feeds WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+  });
+
+  it("leaves out a stored day that is not a date instead of failing every locked request", async () => {
+    // The ledger is written by this app, but it is still stored data. A key that is not a date
+    // used to throw a RangeError out of streakFor, and getFeed reads the streak on every request
+    // while the hour is shut, so one such row failed each of them for as long as it was there.
+    const db = getDb();
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
+    for (const day of ["2026-09-04", "2026-09-05", "2026-09-06"]) recordHourOpen(userId, day, NOW);
+    // Too few parts ("2026-09", ""), and three parts that are not numbers.
+    for (const day of ["2026-09", "", "not-a-date", "2026-09-05x"]) recordHourOpen(userId, day, NOW);
+
+    expect(streakFor(userId, "2026-09-06")).toEqual({ current: 3, longest: 3, total: 3 });
+    const payload = await getFeed(userId, NOW); // noon UTC, before the default 20:00 hour
+    if (payload.status !== "locked") throw new Error(`expected the hour to be shut at noon, got ${payload.status}`);
+    expect(payload.streak).toEqual({ current: 3, longest: 3, total: 3 });
+
+    db.prepare("DELETE FROM hour_opens WHERE user_id = ?").run(userId);
   });
 
   it("is zero for a user who has never opened the scroll", async () => {

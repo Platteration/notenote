@@ -12,7 +12,11 @@ const LINKS = [
   { href: "/settings", label: "Settings" },
 ];
 
-export function Nav({ signedIn }: { signedIn: boolean }) {
+/**
+ * `email` is shown, not just the display name, because which account you are in is the one
+ * thing a sign-in CSRF would change without you noticing.
+ */
+export function Nav({ signedIn, email }: { signedIn: boolean; email?: string }) {
   const pathname = usePathname();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +41,11 @@ export function Nav({ signedIn }: { signedIn: boolean }) {
       </Link>
       {signedIn && (
         <div className="nav-links">
+          {email && (
+            <span className="nav-account" title={`Signed in as ${email}`}>
+              {email}
+            </span>
+          )}
           {LINKS.map((l) => (
             <Link key={l.href} href={l.href} aria-current={pathname === l.href ? "page" : undefined}>
               {l.label}
