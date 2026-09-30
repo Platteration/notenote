@@ -136,6 +136,14 @@ describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accent
     expect(contrast(ink, page), `${name} ${token} on the page`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
+  it.each(["--fg", "--fg-muted"])("%s clears WCAG AA on the raised field surface (search, notes, filters)", (token) => {
+    // The archive puts text and placeholders on --bg-elev-2; wire's is translucent over the page.
+    const raisedValue = required("--bg-elev-2");
+    const rgba = /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(raisedValue);
+    const ground = rgba ? composite([Number(rgba[1]), Number(rgba[2]), Number(rgba[3])], Number(rgba[4]), page) : parseHex(raisedValue);
+    expect(contrast(parseHex(required(token)), ground), `${name} ${token} on --bg-elev-2`).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
   it.each(BADGES)("$ink clears WCAG AA on its own tinted pill", ({ ink, tint, alpha }) => {
     // Most themes tint the pill; a theme that draws badges as outlines leaves the surface bare.
     const pill = badges === "outline" ? surface : composite(tint, alpha, surface);

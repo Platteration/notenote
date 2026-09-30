@@ -76,16 +76,30 @@ try {
   await api("/api/settings", "PUT", { windowStart: hhmm(Date.now() - 2 * 3_600_000) });
   await api("/api/feed", "GET", undefined, 423);
   assert.equal((await api("/api/saved")).saved.length, 1);
+  // The archive works while the hour is shut: a note, a collection, search.
+  await api("/api/saved/note", "PATCH", { key: item.key, note: "watch with Sam" });
+  const col = (await api("/api/collections", "POST", { name: "Cooking" })).collection;
+  await api(`/api/collections/${col.id}/items`, "POST", { key: item.key });
+  assert.equal((await api(`/api/saved?q=${encodeURIComponent("with sam")}`)).saved.length, 1);
+  assert.equal((await api(`/api/saved?collection=${col.id}`)).saved.length, 1);
+  assert.equal((await api("/api/collections")).collections[0].count, 1);
   const exported = await api("/api/account/export");
   assert.equal(exported.account.email, email);
   assert.equal(exported.hourOpens.length, 1);
   assert.ok(!JSON.stringify(exported).includes("password_hash"));
   assert.equal(exported.settings.prefs.accent, "sky");
+  assert.equal(exported.savedItems[0].note, "watch with Sam");
+  assert.equal(exported.collections.length, 1);
+  assert.equal(exported.collectionItems.length, 1);
   await api("/api/settings", "PUT", { prefs: { accent: "apricot" } });
   assert.doesNotMatch(await api.html("/settings"), /<html[^>]*\sdata-accent=/);
-  await api(`/api/saved?key=${encodeURIComponent(item.key)}`, "DELETE");
+  // A clip with a note is removed only when the removal is confirmed.
+  const refused = await api(`/api/saved?key=${encodeURIComponent(item.key)}`, "DELETE", undefined, 409);
+  assert.equal(refused.needsConfirm, true);
+  await api(`/api/saved?key=${encodeURIComponent(item.key)}&confirm=1`, "DELETE");
   assert.equal((await api("/api/saved")).saved.length, 0);
-  console.log("PASS: settings (theme, accent, rejected accent), closed-hour shelf, data export, unsave");
+  assert.equal((await api("/api/collections")).collections[0].count, 0);
+  console.log("PASS: settings (theme, accent, rejected accent), closed-hour archive (note, collection, search), data export, confirmed unsave");
 
   await otherDevice("/api/auth/login", "POST", { email, password });
   assert.equal((await api("/api/account/sessions")).sessions, 2);

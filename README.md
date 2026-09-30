@@ -80,7 +80,7 @@ catalogue so the whole product can be explored without keys. Operators can restr
 platforms appear at all with `ENABLED_PROVIDERS=youtube,reddit,...` (default: all).
 
 Demo clips are generated posters and sample metadata, not playable videos or real social posts.
-They are labelled **Demo** in the scroll and saved shelf; opening a nonexistent post is disabled.
+They are labelled **Demo** in the scroll and the archive; opening a nonexistent post is disabled.
 Live OAuth flows need your platform's credentials and approvals and must be verified with your
 account. Direct playback depends on the source exposing a video URL; other live clips open on
 their source platform. Web Push additionally requires VAPID keys, browser permission, and the notify job.
@@ -210,15 +210,29 @@ poorly is passed over in silence rather than labelled unpopular. The phrasing li
 `src/lib/explain.ts`, a leaf module with a single type-only import so the scroll can render
 explanations without pulling the database layer into the browser bundle.
 
-## Saving, muting and streaks
+## The archive, muting and streaks
 
 The hour is a hard stop, so two things exist to keep that bearable:
 
-- **Save** a clip during the hour and it moves to a shelf at `/saved` that is reachable at any
-  time of day. The shelf stores a copy of the clip's metadata, so it survives the feed being
-  purged. Saves are verified against your own frozen feeds server-side.
+- **Save** a clip during the hour and it moves to **the archive** at `/saved` (Archive in the
+  nav), which is reachable at any time of day. It stores a copy of the clip's metadata, so it
+  survives the feed being purged. Saves are verified against your own frozen feeds server-side.
 - **Less like this** mutes a creator. Curation skips them in every future feed, and you can
-  unmute from the shelf.
+  unmute from the archive.
+
+In the archive each clip can carry a **note** (up to 2,000 characters) and be filed in
+**collections** (up to 50, names up to 60 characters and unique per account whatever their
+case). **Search** looks at the title, the creator and their handle, your note and the names of
+the collections a clip is in, optionally within one collection. It folds case for ASCII letters
+only (SQLite's `LIKE`) and shows the newest 200 matches. The archive holds up to 5,000 clips.
+Saving a clip you already kept keeps its note and collections; deleting a collection keeps its
+clips and their notes.
+
+A note is your own writing and cannot be brought back, so removing a clip that has a note or
+sits in a collection asks first, in the archive and from the scroll's Save button. The server
+holds the same line: `DELETE /api/saved` answers `409` with `needsConfirm` for such a clip
+until `confirm=1` is sent, which covers a note added in another tab or on another device. A
+plain saved clip is removed straight away.
 
 The locked screen shows a streak of consecutive days you turned up for your hour. Because the
 hour is fixed, it rewards the ritual rather than the volume — there is no way to inflate it by
@@ -229,6 +243,12 @@ drops a feed a day after its hour closes, which silently capped every streak at 
 Visit dates are stored separately from expiring feeds, so cleanup does not erase streaks.
 Existing retained feed dates are migrated automatically; dates already purged by an older
 version cannot be recovered. Visit history is included in exports and removed with the account.
+
+The export carries the archive too — each saved clip with its note, the collections and what is
+filed in them — and the endpoints of your push devices, but not their keys. It never fails on one
+unreadable row: a saved clip or feed whose stored copy cannot be read is listed with
+`error: "unreadable"` (a clip keeps its note) and the rest goes ahead. Deleting the account
+removes every row in one transaction.
 
 ## Appearance
 
@@ -321,7 +341,11 @@ the picker and the persisted preference need no change.
 | POST   | `/api/connect/:provider/credentials` | Credential-based connect (Bluesky app password)    |
 | POST   | `/api/cron/prewarm`                | Pre-fetch items for upcoming hours (`CRON_SECRET`)   |
 | POST   | `/api/cron/notify`                 | Send the daily "hour is open" push (`CRON_SECRET`)   |
-| GET/POST/DELETE | `/api/saved`              | The saved shelf                                      |
+| GET/POST/DELETE | `/api/saved`              | The archive; GET takes `q`, `collection`, `provider`; DELETE of an annotated clip needs `confirm=1` |
+| PATCH  | `/api/saved/note`                  | Set or clear a clip's note                           |
+| GET/POST | `/api/collections`               | List collections, or start one                       |
+| PATCH/DELETE | `/api/collections/:id`       | Rename or delete a collection                        |
+| POST/DELETE | `/api/collections/:id/items`  | File a saved clip in a collection, or take it out    |
 | GET/POST/DELETE | `/api/muted`              | Muted creators                                       |
 | GET/POST/DELETE | `/api/push/subscribe`     | Web Push subscriptions for this device               |
 | GET    | `/api/push/key`                    | VAPID public key, or `configured: false`             |
@@ -353,7 +377,9 @@ npm run smoke       # the longer portable walk (scripts/smoke.mjs) against a run
 
 `scripts/smoke.sh` walks the core flow against a running server: the feed is private, the
 hour is shut by default, two demo platforms produce a balanced short-form feed, a clip saves
-to the shelf, a clip from someone else's feed is refused, the hour locks again once it has
+to the archive, a clip from someone else's feed is refused, every archive route answers (a
+note, a collection renamed and deleted, filing, search, and a removal that is refused with 409
+until it is confirmed), the hour locks again once it has
 passed, and sign-in throttling engages. It also checks the security headers on a real response,
 including that HSTS agrees with the scheme `BASE` was reached on — so point `BASE` at the
 address the server itself is configured with. Start the app, then `bash scripts/smoke.sh`. The
@@ -362,7 +388,8 @@ with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and 
 
 `npm run smoke` is a longer walk against a running server that also runs on Windows: it adds
 empty-feed recovery, concurrent requests, watch history, mute persistence, theme and accent
-settings (including a rejected accent), export, password changes, session revocation,
+settings (including a rejected accent), the archive while the hour is shut (a note, a
+collection, search, a removal that is refused and then confirmed), export, password changes, session revocation,
 sign-out/sign-in and disconnection. It creates a unique test account and removes it afterward.
 Run it against a local/test instance: registration and sign-in rate limits still apply to
 repeated runs. Set `BASE` to test another local port.
@@ -506,10 +533,11 @@ it is a product decision rather than a patch, and it is open. Until it is made, 
 decoy-hash timing property as protecting the sign-in endpoint specifically, not as a claim that
 this deployment will not say which addresses are registered.
 
-Four write paths are bounded, because each is loaded into memory whole when a feed is built, so
-an unbounded one is a way to make that slow and to grow shared storage. Recording a watched clip
-only accepts keys that are actually in one of your own recent feeds; muting is capped at 500
-creators; a browser handing out fresh push endpoints evicts the oldest past 20 devices rather
+Five write paths are bounded, because each is loaded into memory whole when a feed or the archive
+is read, so an unbounded one is a way to make that slow and to grow shared storage. Recording a
+watched clip only accepts keys that are actually in one of your own recent feeds; muting is capped
+at 500 creators; the archive holds 5,000 clips and 50 collections, with notes of up to 2,000
+characters; a browser handing out fresh push endpoints evicts the oldest past 20 devices rather
 than piling up; and what a platform sends is normalised on the way in (`sanitiseItems`), so a
 title, creator or URL cannot be as long as the reply that carried it. That last one is applied
 in `collectItems`, once, so it covers all eleven providers rather than whichever was last
@@ -630,7 +658,11 @@ src/lib/providers/  One OAuth + fetch adapter per platform, the demo catalogue, 
                     meta.ts (client-safe names, logos, native deep links)
 src/lib/open-native.ts  Tap-to-open: app scheme first, permalink fallback
 src/lib/scroll-ui.ts  Pure decisions for the scroll (poster shape, keyboard routing); import-free
-src/lib/library.ts  Saved shelf, muted creators, show-up streaks
+src/lib/library.ts  The archive's saved clips, muted creators, show-up streaks
+src/lib/archive.ts  Notes, collections and search over the archive
+src/lib/archive-limits.ts  The archive's limits (import-free, safe for client components)
+src/lib/archive-client.ts  Removing a clip from the browser, asking first when it is annotated
+src/lib/account-data.ts  The data export and account deletion
 src/lib/push.ts     Web Push subscriptions and the one daily notification
 src/lib/effects.ts  Haptics, chimes and motion preferences
 src/proxy.ts        Puts the security headers on every response as it is answered

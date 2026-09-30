@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Countdown } from "./Countdown";
+import { removeFromArchive } from "@/lib/archive-client";
 import { requestJson } from "@/lib/client-api";
 import { PlatformLogo } from "./PlatformLogo";
 import type { CurationReason } from "@/lib/curation";
@@ -237,6 +238,8 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   const watchedRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<Set<string>>(new Set());
   const [savedKeys, setSavedKeys] = useState<Set<string>>(() => new Set(initial.savedKeys));
+  // Saved clips with a note or a collection: taking one of these off the shelf asks first.
+  const annotated = useMemo(() => new Set(initial.annotatedKeys), [initial.annotatedKeys]);
   const [mutedCreators, setMutedCreators] = useState<Set<string>>(() => new Set(initial.mutedCreators));
   const mutations = useRef(new Set<string>());
   const [soundOn, setSoundOn] = useState(false);
@@ -255,11 +258,15 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
       mutations.current.add(item.key);
       const already = savedKeys.has(item.key);
       try {
-        await requestJson(already ? `/api/saved?key=${encodeURIComponent(item.key)}` : "/api/saved", {
-          method: already ? "DELETE" : "POST",
-          headers: { "Content-Type": "application/json" },
-          ...(!already ? { body: JSON.stringify({ key: item.key }) } : {}),
-        });
+        if (already) {
+          if (!(await removeFromArchive(item.key, annotated.has(item.key), (q) => window.confirm(q)))) return;
+        } else {
+          await requestJson("/api/saved", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: item.key }),
+          });
+        }
       setSavedKeys((prev) => {
         const next = new Set(prev);
         if (already) next.delete(item.key);
@@ -267,14 +274,14 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
         return next;
       });
       haptic(prefs, 10);
-        flash(already ? "Removed from saved" : "Saved for later");
+        flash(already ? "Removed from your archive" : "Saved for later");
       } catch (err) {
         flash((err as Error).message);
       } finally {
         mutations.current.delete(item.key);
       }
     },
-    [savedKeys, prefs, flash],
+    [savedKeys, annotated, prefs, flash],
   );
 
   /** Muting hides the creator from every future feed, and dims them for the rest of today. */

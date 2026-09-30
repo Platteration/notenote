@@ -2,9 +2,11 @@
  * The library: the parts of the product that deliberately outlive the hour.
  *
  * A hard cutoff is only tolerable if nothing good is lost forever, so saving a clip keeps
- * a copy of its metadata (not just a key) and stays reachable at any time of day. Muting a
+ * a copy of its metadata (not just a key) and stays reachable at any time of day. Saved clips
+ * are the archive, which src/lib/archive.ts adds notes, collections and search to. Muting a
  * creator is the other direction: an explicit "less like this" that curation respects.
  */
+import { MAX_SAVED_ITEMS } from "./archive-limits";
 import { getDb, now, type DailyFeedRow } from "./db";
 import { UserFacingError } from "./errors";
 import type { MediaItem, ProviderId } from "./providers/types";
@@ -12,6 +14,53 @@ import type { MediaItem, ProviderId } from "./providers/types";
 export interface SavedItem {
   item: MediaItem;
   savedAt: number;
+  /** The user's own note on the clip; empty when there is none. */
+  note: string;
+  /** Ids of the collections the clip is filed in. */
+  collections: string[];
+}
+
+/** A saved_items row as the archive reads it. */
+export interface SavedRow {
+  item_key: string;
+  item_json: string;
+  saved_at: number;
+  note: string;
+}
+
+/**
+ * Rows to SavedItems, with each clip's collections attached. A row whose stored copy cannot be
+ * read is left out rather than failing the whole shelf: one bad row must not hide the rest.
+ */
+export function hydrateSaved(userId: string, rows: SavedRow[]): SavedItem[] {
+  const memberships = new Map<string, string[]>();
+  for (const m of getDb().prepare("SELECT collection_id, item_key FROM collection_items WHERE user_id = ?").all(userId) as Array<{
+    collection_id: string;
+    item_key: string;
+  }>) {
+    const list = memberships.get(m.item_key) ?? [];
+    list.push(m.collection_id);
+    memberships.set(m.item_key, list);
+  }
+  const out: SavedItem[] = [];
+  for (const r of rows) {
+    let item: MediaItem;
+    try {
+      item = JSON.parse(r.item_json) as MediaItem;
+    } catch {
+      continue;
+    }
+    out.push({ item, savedAt: r.saved_at, note: r.note, collections: memberships.get(r.item_key) ?? [] });
+  }
+  return out;
+}
+
+/** One saved clip, or null when it is not in this user's archive. */
+export function readSaved(userId: string, itemKey: string): SavedItem | null {
+  const row = getDb()
+    .prepare("SELECT item_key, item_json, saved_at, note FROM saved_items WHERE user_id = ? AND item_key = ?")
+    .get(userId, itemKey) as SavedRow | undefined;
+  return row ? (hydrateSaved(userId, [row])[0] ?? null) : null;
 }
 
 /** Look an item up in one of the user's own frozen feeds, so clients can't inject arbitrary data. */
@@ -30,24 +79,47 @@ function findInFeeds(userId: string, itemKey: string): MediaItem | null {
 export function saveItem(userId: string, itemKey: string, at: number = now()): SavedItem {
   const item = findInFeeds(userId, itemKey);
   if (!item) throw new UserFacingError("That clip isn't in any of your recent feeds");
-  getDb()
+  const db = getDb();
+  // Only a new clip counts toward the cap; saving one already kept refreshes its copy.
+  if (!db.prepare("SELECT 1 FROM saved_items WHERE user_id = ? AND item_key = ?").get(userId, itemKey)) {
+    const count = (db.prepare("SELECT COUNT(*) AS c FROM saved_items WHERE user_id = ?").get(userId) as { c: number }).c;
+    if (count >= MAX_SAVED_ITEMS) throw new UserFacingError(`Your archive holds up to ${MAX_SAVED_ITEMS} clips. Remove some first.`);
+  }
+  // On a clip already saved only its copy is refreshed, so its note and collections stay.
+  db
     .prepare(
       `INSERT INTO saved_items (user_id, item_key, item_json, saved_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(user_id, item_key) DO UPDATE SET item_json = excluded.item_json`,
     )
     .run(userId, itemKey, JSON.stringify(item), at);
-  return { item, savedAt: at };
+  return readSaved(userId, itemKey)!;
 }
 
-export function unsaveItem(userId: string, itemKey: string): void {
-  getDb().prepare("DELETE FROM saved_items WHERE user_id = ? AND item_key = ?").run(userId, itemKey);
+/**
+ * Removing a clip that carries the user's own writing — a note, or a place in a collection —
+ * needs `confirmed`. Without it the clip stays and this answers 409, so a tap on a stale tab or
+ * another device cannot delete a note it never showed. A plain saved clip goes straight away.
+ */
+export function unsaveItem(userId: string, itemKey: string, { confirmed = false }: { confirmed?: boolean } = {}): void {
+  const db = getDb();
+  if (!confirmed) {
+    const annotated = db
+      .prepare(
+        `SELECT 1 FROM saved_items WHERE user_id = ? AND item_key = ?
+           AND (note <> '' OR EXISTS (SELECT 1 FROM collection_items WHERE user_id = ? AND item_key = ?))`,
+      )
+      .get(userId, itemKey, userId, itemKey);
+    if (annotated) throw new UserFacingError("This clip has a note or is in a collection. Confirm to remove it and its note.", 409);
+  }
+  // Its collection memberships go with it (ON DELETE CASCADE); the note is part of the row.
+  db.prepare("DELETE FROM saved_items WHERE user_id = ? AND item_key = ?").run(userId, itemKey);
 }
 
 export function listSaved(userId: string): SavedItem[] {
   const rows = getDb()
-    .prepare("SELECT item_json, saved_at FROM saved_items WHERE user_id = ? ORDER BY saved_at DESC")
-    .all(userId) as Array<{ item_json: string; saved_at: number }>;
-  return rows.map((r) => ({ item: JSON.parse(r.item_json) as MediaItem, savedAt: r.saved_at }));
+    .prepare("SELECT item_key, item_json, saved_at, note FROM saved_items WHERE user_id = ? ORDER BY saved_at DESC")
+    .all(userId) as unknown as SavedRow[];
+  return hydrateSaved(userId, rows);
 }
 
 export function savedKeys(userId: string): string[] {

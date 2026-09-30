@@ -89,7 +89,7 @@ export function LockedView({ initial, prefs }: { initial: LockedPayload; prefs: 
           {state.savedCount > 0 && (
             <Link className="streak" href="/saved">
               <strong>{state.savedCount}</strong>
-              <span>saved to watch</span>
+              <span>in your archive</span>
             </Link>
           )}
         </div>

@@ -1,31 +1,126 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { requestJson } from "@/lib/client-api";
+import { ArchiveCard } from "./ArchiveCard";
 import { PlatformLogo } from "./PlatformLogo";
+import type { Collection } from "@/lib/archive";
+import { ARCHIVE_SEARCH_LIMIT, MAX_COLLECTION_NAME, MAX_SEARCH_QUERY } from "@/lib/archive-limits";
 import type { MutedCreator, SavedItem } from "@/lib/library";
-import { openInNativeApp } from "@/lib/open-native";
 import { providerName } from "@/lib/providers/meta";
 
-function when(ms: number): string {
-  const days = Math.floor((Date.now() - ms) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return `${days} days ago`;
-}
-
-export function SavedShelf({ initial, initialMuted }: { initial: SavedItem[]; initialMuted: MutedCreator[] }) {
+export function SavedShelf({
+  initial,
+  initialMuted,
+  initialCollections,
+}: {
+  initial: SavedItem[];
+  initialMuted: MutedCreator[];
+  initialCollections: Collection[];
+}) {
   const [saved, setSaved] = useState(initial);
   const [muted, setMuted] = useState(initialMuted);
+  const [collections, setCollections] = useState(initialCollections);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [anySaved, setAnySaved] = useState(initial.length > 0);
+  const firstRun = useRef(true);
+  const activeCollection = collections.find((c) => c.id === active) ?? null;
+  const filtering = query.trim() !== "" || active !== null;
 
-  async function remove(key: string) {
+  // Search as you type, a beat after the last keystroke, and drop an answer that went stale.
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (query.trim()) params.set("q", query.trim());
+      if (active) params.set("collection", active);
+      const url = params.size ? `/api/saved?${params}` : "/api/saved";
+      requestJson<{ saved: SavedItem[] }>(url, { signal: controller.signal })
+        .then((body) => {
+          setSaved(body.saved);
+          setError(null);
+        })
+        .catch((err: Error) => {
+          if (!controller.signal.aborted) setError(err.message);
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, active]);
+
+  async function refreshCollections() {
+    const body = await requestJson<{ collections: Collection[] }>("/api/collections");
+    setCollections(body.collections);
+  }
+
+  async function act(work: () => Promise<void>) {
     setError(null);
     try {
-      await requestJson(`/api/saved?key=${encodeURIComponent(key)}`, { method: "DELETE" });
-      setSaved((list) => list.filter((s) => s.item.key !== key));
-    } catch (err) { setError((err as Error).message); }
+      await work();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const createCollection = () =>
+    act(async () => {
+      await requestJson("/api/collections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      setNewName("");
+      await refreshCollections();
+    });
+
+  const renameCollection = (id: string, name: string) =>
+    act(async () => {
+      await requestJson(`/api/collections/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      setRenaming(null);
+      await refreshCollections();
+    });
+
+  // A collection is only a grouping: its clips and their notes stay, so it goes without asking.
+  const deleteCollection = (id: string) =>
+    act(async () => {
+      await requestJson(`/api/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setActive(null);
+      setSaved((list) => list.map((s) => ({ ...s, collections: s.collections.filter((c) => c !== id) })));
+      await refreshCollections();
+    });
+
+  function changed(next: SavedItem) {
+    setSaved((list) =>
+      list
+        .map((s) => (s.item.key === next.item.key ? next : s))
+        // Taken out of the collection being viewed: it no longer belongs in this view.
+        .filter((s) => active === null || s.collections.includes(active)),
+    );
+    void refreshCollections().catch(() => {});
+  }
+
+  function removed(key: string) {
+    setSaved((list) => {
+      const rest = list.filter((s) => s.item.key !== key);
+      if (!filtering && rest.length === 0) setAnySaved(false);
+      return rest;
+    });
+    void refreshCollections().catch(() => {});
   }
 
   async function unmute(provider: string, creatorHandle: string) {
@@ -41,7 +136,89 @@ export function SavedShelf({ initial, initialMuted }: { initial: SavedItem[]; in
   return (
     <>
       {error && <p className="error" role="alert">{error}</p>}
-      {saved.length === 0 ? (
+      {anySaved && (
+        <div className="archive-tools">
+          <div className="field">
+            <label htmlFor="archive-q">Search</label>
+            <input
+              id="archive-q"
+              type="search"
+              maxLength={MAX_SEARCH_QUERY}
+              placeholder="Title, creator, note or collection"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <div className="recap-row archive-filters" role="group" aria-label="Collections">
+            <button type="button" className="recap-chip" aria-pressed={active === null} onClick={() => setActive(null)}>
+              All
+            </button>
+            {collections.map((c) => (
+              <button key={c.id} type="button" className="recap-chip" aria-pressed={active === c.id} onClick={() => setActive(c.id)}>
+                {c.name} · {c.count}
+              </button>
+            ))}
+          </div>
+          <form
+            className="archive-new"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void createCollection();
+            }}
+          >
+            <label className="visually-hidden" htmlFor="archive-new">
+              New collection name
+            </label>
+            <input
+              id="archive-new"
+              className="archive-input"
+              maxLength={MAX_COLLECTION_NAME}
+              placeholder="New collection"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+            />
+            <button className="btn btn-ghost btn-sm" type="submit" disabled={!newName.trim()}>
+              Add
+            </button>
+          </form>
+          {activeCollection && (
+            <div className="archive-collection-actions">
+              {renaming === activeCollection.id ? (
+                <form
+                  className="archive-new"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const name = new FormData(e.currentTarget).get("name");
+                    void renameCollection(activeCollection.id, String(name ?? ""));
+                  }}
+                >
+                  <label className="visually-hidden" htmlFor="archive-rename">
+                    New name for {activeCollection.name}
+                  </label>
+                  <input id="archive-rename" name="name" className="archive-input" maxLength={MAX_COLLECTION_NAME} defaultValue={activeCollection.name} />
+                  <button className="btn btn-ghost btn-sm" type="submit">
+                    Save name
+                  </button>
+                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRenaming(null)}>
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRenaming(activeCollection.id)}>
+                    Rename
+                  </button>
+                  <button className="btn btn-danger btn-sm" type="button" onClick={() => void deleteCollection(activeCollection.id)}>
+                    Delete collection
+                  </button>
+                  <span className="hint">Its clips and their notes stay in your archive.</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {!anySaved ? (
         <div className="card">
           <h2>Nothing saved yet</h2>
           <p>
@@ -52,35 +229,27 @@ export function SavedShelf({ initial, initialMuted }: { initial: SavedItem[]; in
             .
           </p>
         </div>
+      ) : saved.length === 0 ? (
+        <div className="card">
+          <h2>No clips match</h2>
+          <p>Nothing in your archive matches that search{active ? " in this collection" : ""}.</p>
+        </div>
       ) : (
-        saved.map(({ item, savedAt }) => (
-          <div className="card saved-card" key={item.key}>
-            <PlatformLogo provider={item.provider} size={40} />
-            <div className="saved-body">
-              <strong>{item.title}</strong>
-              <span>
-                {item.creator} · saved {when(savedAt)}
-              </span>
-            </div>
-            <div className="provider-actions">
-              {item.demo ? <span className="badge badge-demo">demo</span> : <a
-                className="btn btn-sm"
-                href={item.permalink}
-                onClick={(e) => {
-                  e.preventDefault();
-                  openInNativeApp(item);
-                }}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open
-              </a>}
-              <button className="link-muted" type="button" onClick={() => remove(item.key)}>
-                remove
-              </button>
-            </div>
-          </div>
-        ))
+        <>
+          {saved.map((entry) => (
+            <ArchiveCard
+              key={entry.item.key}
+              entry={entry}
+              collections={collections}
+              onChange={changed}
+              onRemoved={removed}
+              onError={(message) => setError(message)}
+            />
+          ))}
+          {filtering && saved.length >= ARCHIVE_SEARCH_LIMIT && (
+            <p className="hint">Showing the first {ARCHIVE_SEARCH_LIMIT} matches. Narrow the search to see more.</p>
+          )}
+        </>
       )}
 
       {muted.length > 0 && (

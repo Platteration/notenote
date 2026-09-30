@@ -1,9 +1,9 @@
 /**
- * DELETE /api/account — permanently delete the signed-in account and everything attached
- * to it: connections and their tokens, cached items, feeds, seen history and settings.
+ * DELETE /api/account — permanently delete the signed-in account and everything attached to
+ * it, the archive included. What goes is listed in deleteAccountData (src/lib/account-data.ts).
  */
 import { json, readJson, withUser } from "@/lib/api";
-import { getDb } from "@/lib/db";
+import { deleteAccountData } from "@/lib/account-data";
 import { destroySession } from "@/lib/session";
 
 export const DELETE = withUser(async (req, user) => {
@@ -11,13 +11,7 @@ export const DELETE = withUser(async (req, user) => {
   if (body.confirm !== user.email) {
     return json({ error: "Type your email address to confirm deletion" }, { status: 400 });
   }
-  const db = getDb();
-  for (const table of ["sessions", "settings", "connections", "daily_feeds", "hour_opens", "scroll_visits", "seen_items", "saved_items", "muted_creators"]) {
-    db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
-  }
-  db.prepare("DELETE FROM provider_cache WHERE user_id = ?").run(user.id);
-  db.prepare("DELETE FROM oauth_states WHERE user_id = ?").run(user.id);
-  db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+  deleteAccountData(user.id);
   await destroySession();
   return json({ deleted: true });
 });

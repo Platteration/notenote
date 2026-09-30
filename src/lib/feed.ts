@@ -1,6 +1,7 @@
 /**
  * The daily feed: generated once per local day, frozen for the whole hour, then gone.
  */
+import { annotatedKeys } from "./archive";
 import { collectItems } from "./connections";
 import { curate, type CurationReason } from "./curation";
 import { getDb, now, type DailyFeedRow } from "./db";
@@ -18,6 +19,11 @@ export interface FeedPayload {
   items: MediaItem[];
   seenKeys: string[];
   savedKeys: string[];
+  /**
+   * Saved clips that carry a note or sit in a collection, so the scroll's Save toggle can ask
+   * before removing one. A snapshot at load; the server still refuses without confirmation.
+   */
+  annotatedKeys: string[];
   mutedCreators: string[];
   sources: Array<{ provider: string; count: number; error: string | null }>;
   /**
@@ -120,6 +126,7 @@ export async function getFeed(userId: string, at: number = now()): Promise<FeedP
     items,
     seenKeys: seenToday,
     savedKeys: savedKeys(userId),
+    annotatedKeys: annotatedKeys(userId),
     mutedCreators: [...mutedSet(userId)],
     sources,
     reasons,

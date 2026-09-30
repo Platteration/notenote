@@ -101,7 +101,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); fon
 body { min-height: 100vh; min-height: 100dvh; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; }
-input, select { font: inherit; }
+input, select, textarea { font: inherit; }
 
 /* ---- Reduced motion -----------------------------------------------------
    A three-state preference, written to data-reduce-motion on the root element:
@@ -181,11 +181,16 @@ input, select { font: inherit; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--fg-muted); }
-.field input, .field select {
+.field input, .field select, .field textarea,
+.archive-input, .archive-select {
   background: var(--bg-elev-2); color: var(--fg); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
   outline: none; width: 100%;
 }
-.field input:focus, .field select:focus { border-color: var(--accent); }
+.field input:focus, .field select:focus, .field textarea:focus,
+.archive-input:focus, .archive-select:focus { border-color: var(--accent); }
+.field textarea { resize: vertical; min-height: 72px; line-height: 1.45; }
+/* Placeholders in the archive's own fields; --fg-faint would fall to 4.37:1 on light's raised surface. */
+.field textarea::placeholder, #archive-q::placeholder, .archive-input::placeholder { color: var(--fg-muted); }
 /* Range thumbs, checkboxes and the time-picker chrome follow the theme accent. */
 .field input[type="range"] { accent-color: var(--accent); padding: 0; background: transparent; border: none; }
 .hint { font-size: 13px; color: var(--fg-faint); line-height: 1.5; }
@@ -408,11 +413,32 @@ input, select { font: inherit; }
 .provider-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .link-muted { color: var(--fg-faint); font-size: 12px; text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; }
 
-.saved-card { display: flex; align-items: center; gap: 14px; }
-.saved-body { flex: 1; min-width: 0; }
+.saved-card { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.saved-body { flex: 1 1 220px; min-width: 0; }
 .saved-body strong { display: block; font-size: 15px; line-height: 1.35; }
 .saved-body span { display: block; font-size: 13px; color: var(--fg-muted); margin-top: 3px; }
 .recap-chip .link-muted { margin-left: 4px; }
+
+/* ---- The archive ---------------------------------------------------------
+   Search, collection filters and per-clip notes. Everything wraps with flex rather than a
+   breakpoint of its own, so the screen-shape rules at the end of this file stay the only ones. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.archive-tools { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.archive-tools .field { margin-bottom: 0; }
+.archive-filters { margin-top: 0; }
+button.recap-chip { border: none; cursor: pointer; color: var(--fg-muted); font: inherit; font-size: 13px; font-weight: 700; padding: 4px 10px; }
+button.recap-chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.archive-new, .archive-collection-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.archive-input { flex: 1 1 180px; min-width: 0; width: auto; padding: 8px 12px; }
+.archive-select { width: auto; padding: 6px 10px; font-size: 13px; }
+.archive-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.saved-collections, .saved-note { flex-basis: 100%; }
+.saved-collections { display: flex; flex-wrap: wrap; gap: 6px; }
+.archive-chip { padding: 4px 6px 4px 10px; }
+.chip-remove { background: none; border: none; padding: 0 4px; color: var(--fg-muted); cursor: pointer; font: inherit; font-size: 15px; line-height: 1; }
+.card .note-text { white-space: pre-wrap; color: var(--fg); font-size: 14px; line-height: 1.5; margin: 0; }
+.saved-note.field { margin-bottom: 0; }
+.note-count { display: block; font-size: 12px; color: var(--fg-muted); text-align: right; }
 .streak-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
 .streak { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px; padding: 12px 18px; min-width: 96px; }
 .streak strong { display: block; font-family: var(--font-display); font-size: 24px; letter-spacing: -0.03em; }
@@ -491,12 +517,20 @@ input, select { font: inherit; }
 :root[data-theme="wire"] .btn-danger { border-color: rgba(255, 157, 157, 0.5); }
 
 :root[data-theme="wire"] .field input,
-:root[data-theme="wire"] .field select {
+:root[data-theme="wire"] .field select,
+:root[data-theme="wire"] .field textarea,
+:root[data-theme="wire"] .archive-input,
+:root[data-theme="wire"] .archive-select {
   background: transparent;
   border-color: var(--border);
 }
 :root[data-theme="wire"] .field input:focus,
-:root[data-theme="wire"] .field select:focus { border-color: var(--accent); }
+:root[data-theme="wire"] .field select:focus,
+:root[data-theme="wire"] .field textarea:focus,
+:root[data-theme="wire"] .archive-input:focus,
+:root[data-theme="wire"] .archive-select:focus { border-color: var(--accent); }
+/* A pressed filter chip is outlined in the accent, like the segmented control's pressed state. */
+:root[data-theme="wire"] button.recap-chip[aria-pressed="true"] { background: transparent; box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); }
 
 :root[data-theme="wire"] .tabs,
 :root[data-theme="wire"] .segmented {

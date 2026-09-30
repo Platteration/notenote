@@ -124,6 +124,24 @@ CREATE TABLE IF NOT EXISTS saved_items (
   saved_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, item_key)
 );
+-- The archive's collections. A name is unique per user whatever its case.
+CREATE TABLE IF NOT EXISTS collections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL COLLATE NOCASE,
+  created_at INTEGER NOT NULL,
+  UNIQUE (user_id, name)
+);
+-- A clip filed in a collection. The composite key onto saved_items means a user can only file
+-- a clip they saved, and unsaving it (or deleting the collection) removes the membership.
+CREATE TABLE IF NOT EXISTS collection_items (
+  user_id TEXT NOT NULL,
+  collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (collection_id, item_key),
+  FOREIGN KEY (user_id, item_key) REFERENCES saved_items(user_id, item_key) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS muted_creators (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider TEXT NOT NULL,
@@ -287,6 +305,8 @@ function reencryptTokens(db: DatabaseSync, freshKey: boolean): void {
 /** Bring databases created by earlier versions up to the current schema. */
 function migrate(db: DatabaseSync, freshKey: boolean): void {
   ensureColumn(db, "settings", "prefs", "prefs TEXT NOT NULL DEFAULT '{}'");
+  // The archive's note on a saved clip; every clip saved before it existed starts with none.
+  ensureColumn(db, "saved_items", "note", "note TEXT NOT NULL DEFAULT ''");
   // Streaks used to be counted from daily_feeds, which the housekeeping sweep empties a day
   // after each hour closes, so they could never reach three. hour_opens is the ledger now;
   // seed it from whatever feed rows a database still has so nobody's streak restarts at zero.
@@ -302,6 +322,31 @@ function migrate(db: DatabaseSync, freshKey: boolean): void {
      SELECT user_id, day_key, CAST(strftime('%s', day_key) AS INTEGER) * 1000 FROM scroll_visits`,
   );
   reencryptTokens(db, freshKey);
+}
+
+let inTransaction = false;
+
+/**
+ * Run `fn` as one transaction: all of its writes land, or none do.
+ *
+ * `fn` must be synchronous (node:sqlite is), or the commit would run before its awaits. A call
+ * made inside another runs as part of the outer one, because SQLite cannot nest BEGIN.
+ */
+export function transaction<T>(fn: () => T): T {
+  if (inTransaction) return fn();
+  const db = getDb();
+  db.exec("BEGIN");
+  inTransaction = true;
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  } finally {
+    inTransaction = false;
+  }
 }
 
 export function now(): number {

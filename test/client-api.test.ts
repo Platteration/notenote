@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { requestJson, safeReturnPath } from "@/lib/client-api";
+import { RequestError, requestJson, safeReturnPath } from "@/lib/client-api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -15,6 +15,15 @@ describe("client requests", () => {
   it("handles an HTML proxy failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>Bad gateway</html>", { status: 502 })));
     await expect(requestJson("/api/settings")).rejects.toThrow(/Please try again/);
+  });
+  it("tells a caller the status and body, so it can ask before retrying a refused change", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Confirm first", needsConfirm: true }, { status: 409 })));
+    const err = await requestJson("/api/saved?key=x", { method: "DELETE" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RequestError);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as RequestError).status).toBe(409);
+    expect((err as RequestError).body).toEqual({ error: "Confirm first", needsConfirm: true });
+    expect((err as RequestError).message).toBe("Confirm first");
   });
   it("returns successful JSON", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ saved: true })));
