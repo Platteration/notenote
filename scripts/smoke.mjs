@@ -6,7 +6,7 @@ const email = `smoke-${randomUUID()}@example.com`;
 const password = "smoke-password-123";
 function client() {
   let cookie = "";
-  return async (path, method = "GET", body, expected = 200) => {
+  const call = async (path, method = "GET", body, expected = 200) => {
     const res = await fetch(`${base}${path}`, {
       method,
       headers: { "Content-Type": "application/json", Cookie: cookie },
@@ -20,6 +20,13 @@ function client() {
     assert.equal(res.status, expected, `${method} ${path}: ${JSON.stringify(value)}`);
     return value;
   };
+  /** A rendered page as HTML, for asserting what the server put on the document itself. */
+  call.html = async (path) => {
+    const res = await fetch(`${base}${path}`, { headers: { Cookie: cookie }, redirect: "manual", signal: AbortSignal.timeout(35_000) });
+    assert.equal(res.status, 200, `GET ${path}`);
+    return res.text();
+  };
+  return call;
 }
 const api = client();
 const otherDevice = client();
@@ -57,8 +64,14 @@ try {
   assert.equal((await api("/api/muted")).muted.length, 0);
   console.log("PASS: watch history, save validation, mute persistence, unmute");
 
-  await api("/api/settings", "PUT", { prefs: { theme: "wire", reduceMotion: true } });
-  assert.equal((await api("/api/settings")).settings.prefs.theme, "wire");
+  await api("/api/settings", "PUT", { prefs: { theme: "wire", reduceMotion: true, accent: "sky" } });
+  const prefs = (await api("/api/settings")).settings.prefs;
+  assert.equal(prefs.theme, "wire");
+  assert.equal(prefs.accent, "sky");
+  // The accent is applied on the document element by the server, not by client script. The
+  // swatches carry data-accent too, so the check is anchored to the <html> tag itself.
+  assert.match(await api.html("/settings"), /<html[^>]*\sdata-accent="sky"/);
+  await api("/api/settings", "PUT", { prefs: { accent: "neon" } }, 400);
   await api("/api/settings", "PUT", { windowStart: "99:99" }, 400);
   await api("/api/settings", "PUT", { windowStart: hhmm(Date.now() - 2 * 3_600_000) });
   await api("/api/feed", "GET", undefined, 423);
@@ -67,9 +80,12 @@ try {
   assert.equal(exported.account.email, email);
   assert.equal(exported.scrollVisits.length, 1);
   assert.ok(!JSON.stringify(exported).includes("password_hash"));
+  assert.equal(exported.settings.prefs.accent, "sky");
+  await api("/api/settings", "PUT", { prefs: { accent: "apricot" } });
+  assert.doesNotMatch(await api.html("/settings"), /<html[^>]*\sdata-accent=/);
   await api(`/api/saved?key=${encodeURIComponent(item.key)}`, "DELETE");
   assert.equal((await api("/api/saved")).saved.length, 0);
-  console.log("PASS: settings, closed-hour shelf, data export, unsave");
+  console.log("PASS: settings (theme, accent, rejected accent), closed-hour shelf, data export, unsave");
 
   await otherDevice("/api/auth/login", "POST", { email, password });
   assert.equal((await api("/api/account/sessions")).sessions, 2);

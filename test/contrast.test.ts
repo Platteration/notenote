@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { ACCENT_CATALOGUE, DEFAULT_ACCENT } from "@/lib/accent";
 import { THEME_CATALOGUE } from "@/lib/theme";
 
 /**
@@ -11,6 +12,8 @@ import { THEME_CATALOGUE } from "@/lib/theme";
 const CSS = readFileSync("src/app/globals.css", "utf8");
 
 const AA_NORMAL = 4.5;
+/** Large text and non-text contrast (WCAG 1.4.3 / 1.4.11). */
+const AA_LARGE = 3;
 
 function channel(c: number): number {
   const s = c / 255;
@@ -39,29 +42,53 @@ function composite(fg: Rgb, alpha: number, bg: Rgb): Rgb {
   return fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha))) as Rgb;
 }
 
-/** Pull the custom properties out of one rule block. */
-function tokensOf(selector: string): Record<string, string> {
-  const start = CSS.indexOf(selector);
-  if (start === -1) throw new Error(`no rule for ${selector}`);
-  const open = CSS.indexOf("{", start);
+/**
+ * Pull the custom properties out of one rule block. The selector must open a rule at the
+ * start of a line, alone or first in a selector list, so `[data-accent="x"]` can never be read
+ * as a theme block and `:root` cannot match `:root[data-reduce-motion]`. The match is
+ * returned too, so a caller can check what else the selector list contained.
+ */
+function ruleFor(selector: string): { tokens: Record<string, string>; prelude: string } {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^[ \\t]*${esc}\\s*(?:,[^{}]*)?\\{`, "m").exec(CSS);
+  if (!match) throw new Error(`no rule for ${selector}`);
+  const open = match.index + match[0].length;
   const close = CSS.indexOf("}", open);
-  const body = CSS.slice(open + 1, close);
-  const out: Record<string, string> = {};
-  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) out[name] = value.trim();
-  return out;
+  const body = CSS.slice(open, close);
+  const tokens: Record<string, string> = {};
+  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) tokens[name] = value.trim();
+  return { tokens, prelude: match[0] };
+}
+
+function tokensOf(selector: string): Record<string, string> {
+  return ruleFor(selector).tokens;
+}
+
+function pick(tokens: Record<string, string>, names: string[]): Record<string, string> {
+  return Object.fromEntries(names.map((n) => [n, tokens[n]]));
 }
 
 /**
  * Every theme in the catalogue is checked, so adding one to theme.ts is enough to bring it
  * under test — and a catalogue entry with no stylesheet block fails loudly in tokensOf.
- * "dark" is the bare :root defaults; "system" is the absence of the attribute and has no
- * block, so it is the one entry skipped.
+ * "dark" is the bare :root defaults. "system" has no block of its own: on a dark OS it is the
+ * :root defaults, and on a light OS it is the `:root:not([data-theme])` block inside the
+ * prefers-color-scheme media query, which is checked here as its own scheme.
  */
-const THEMES = THEME_CATALOGUE.filter((t) => t.id !== "system").map((t) => ({
-  name: t.id,
-  selector: t.id === "dark" ? ":root {" : `:root[data-theme="${t.id}"] {`,
-  badges: t.badges,
-}));
+const SCHEMES = [
+  ...THEME_CATALOGUE.filter((t) => t.id !== "system").map((t) => ({
+    name: t.id,
+    selector: t.id === "dark" ? ":root" : `:root[data-theme="${t.id}"]`,
+    badges: t.badges,
+    accentSelector: (id: string) => (t.id === "dark" ? `[data-accent="${id}"]` : `:root[data-theme="${t.id}"][data-accent="${id}"]`),
+  })),
+  {
+    name: "system-light",
+    selector: ":root:not([data-theme])",
+    badges: "pill" as const,
+    accentSelector: (id: string) => `:root:not([data-theme])[data-accent="${id}"]`,
+  },
+];
 
 // Badge backgrounds as declared in the stylesheet, over the card surface.
 const BADGES: Array<{ ink: string; tint: Rgb; alpha: number }> = [
@@ -70,14 +97,20 @@ const BADGES: Array<{ ink: string; tint: Rgb; alpha: number }> = [
   { ink: "--badge-off-ink", tint: [128, 128, 150], alpha: 0.12 },
 ];
 
-describe.each(THEMES)("$name theme contrast", ({ name, selector, badges }) => {
+const ACCENT_TOKENS = ["--accent", "--accent-2", "--accent-ink"];
+/** The scroll is always black, and the time bar, list markers and reason bars sit on it. */
+const SCROLL: Rgb = [0, 0, 0];
+
+describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accentSelector }) => {
   const tokens = tokensOf(selector);
   // The wireframe theme draws cards as outlines, so text sits on the page itself.
   const surface = parseHex(tokens["--bg-elev"]?.startsWith("#") ? tokens["--bg-elev"] : tokens["--bg"]);
   const page = parseHex(tokens["--bg"]);
+  // Inputs sit on the raised surface; the wire theme leaves them transparent on the page.
+  const focusSurface = tokens["--bg-elev-2"]?.startsWith("#") ? parseHex(tokens["--bg-elev-2"]) : page;
 
   it("defines every colour token the themes share", () => {
-    for (const token of ["--bg", "--fg", "--fg-muted", "--fg-faint", ...BADGES.map((b) => b.ink)]) {
+    for (const token of ["--bg", "--fg", "--fg-muted", "--fg-faint", ...ACCENT_TOKENS, ...BADGES.map((b) => b.ink)]) {
       expect(tokens[token], `${name} is missing ${token}`).toBeTruthy();
     }
   });
@@ -92,5 +125,73 @@ describe.each(THEMES)("$name theme contrast", ({ name, selector, badges }) => {
     // Most themes tint the pill; a theme that draws badges as outlines leaves the surface bare.
     const pill = badges === "outline" ? surface : composite(tint, alpha, surface);
     expect(contrast(parseHex(tokens[ink]), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  /**
+   * Every accent is checked under every scheme. A missing block throws in ruleFor; a block
+   * without the descendant selector (which the picker swatches rely on) fails the first test.
+   */
+  const accents = ACCENT_CATALOGUE.map((a) => ({ id: a.id, ...ruleFor(accentSelector(a.id)) }));
+
+  it.each(accents)("$id declares its pair for this scheme, for the page and for the swatch preview", ({ id, tokens: t, prelude }) => {
+    for (const token of ACCENT_TOKENS) expect(t[token], `${name}/${id} is missing ${token}`).toBeTruthy();
+    // The bare base block matches a swatch element itself; every scheme block needs a
+    // descendant form (`… [data-accent="x"]`) for the swatch to preview that scheme's pair.
+    if (!accentSelector(id).startsWith("[")) {
+      expect(prelude, `${name}/${id} needs its descendant selector so the picker swatch previews this scheme's pair`).toMatch(
+        new RegExp(`[\\])] \\[data-accent="${id}"\\]`),
+      );
+    }
+  });
+
+  it.each(accents)("$id keeps primary-button ink (and the switch thumb) legible on both ends of the gradient", ({ tokens: t }) => {
+    const ink = parseHex(t["--accent-ink"]);
+    expect(contrast(ink, parseHex(t["--accent"]))).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(contrast(ink, parseHex(t["--accent-2"]))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it.each(accents)("$id is a visible focus border on a field", ({ tokens: t }) => {
+    // The accent border is the only focus indicator on text fields, so it must clear 3:1.
+    expect(contrast(parseHex(t["--accent"]), focusSurface)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it.each(accents)("$id pair is visible on the card, the page and the black scroll", ({ tokens: t }) => {
+    for (const token of ["--accent", "--accent-2"]) {
+      const colour = parseHex(t[token]);
+      expect(contrast(colour, surface), `${token} on the card`).toBeGreaterThanOrEqual(AA_LARGE);
+      expect(contrast(colour, page), `${token} on the page`).toBeGreaterThanOrEqual(AA_LARGE);
+      expect(contrast(colour, SCROLL), `${token} on the scroll`).toBeGreaterThanOrEqual(AA_LARGE);
+    }
+  });
+
+  if (badges === "outline") {
+    // Wire uses the accent as button and segmented-control text, not as a fill.
+    it.each(accents)("$id is legible as text on the wire ground", ({ tokens: t }) => {
+      expect(contrast(parseHex(t["--accent"]), page)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+  }
+
+  it("carries the default accent in its own tokens, so the default needs no attribute", () => {
+    expect(pick(tokensOf(accentSelector(DEFAULT_ACCENT)), ACCENT_TOKENS)).toEqual(pick(tokens, ACCENT_TOKENS));
+  });
+});
+
+describe("the stylesheet's structure", () => {
+  it("gives System on a light OS exactly the pinned Light palette", () => {
+    expect(tokensOf(":root:not([data-theme])")).toEqual(tokensOf(':root[data-theme="light"]'));
+    for (const a of ACCENT_CATALOGUE) {
+      expect(tokensOf(`:root:not([data-theme])[data-accent="${a.id}"]`), a.id).toEqual(
+        tokensOf(`:root[data-theme="light"][data-accent="${a.id}"]`),
+      );
+    }
+  });
+
+  it("keeps the accent blocks after every theme block, so the base accent wins by order", () => {
+    expect(CSS.indexOf('[data-accent="')).toBeGreaterThan(CSS.lastIndexOf(':root[data-theme="wire"] {'));
+  });
+
+  it("draws the switch thumb and the brand-mark glow from the accent tokens", () => {
+    expect(CSS).toMatch(/\.switch\[aria-checked="true"\]::after \{[^}]*background: var\(--accent-ink\)/);
+    expect(CSS).toMatch(/\.brand-mark \{[^}]*color-mix\(in srgb, var\(--accent-2\) 35%, transparent\)/);
   });
 });

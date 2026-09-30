@@ -39,8 +39,9 @@
     --badge-demo-ink: #9a5200;
     --badge-live-ink: #0b6b47;
     --badge-off-ink: #5b5b6b;
-    --accent: #e07b1a;
-    --accent-2: #e0355c;
+    --accent: #cc6a06;
+    --accent-2: #e84b74;
+    --accent-ink: #1a0a10;
     --ok: #12855a;
     --danger: #c62828;
     --border: rgba(20, 20, 35, 0.1);
@@ -59,8 +60,9 @@
   --badge-demo-ink: #9a5200;
   --badge-live-ink: #0b6b47;
   --badge-off-ink: #5b5b6b;
-  --accent: #e07b1a;
-  --accent-2: #e0355c;
+  --accent: #cc6a06;
+  --accent-2: #e84b74;
+  --accent-ink: #1a0a10;
   --ok: #12855a;
   --danger: #c62828;
   --border: rgba(20, 20, 35, 0.1);
@@ -131,6 +133,8 @@ input, select { font: inherit; }
   width: 28px; height: 28px; border-radius: 9px; flex-shrink: 0;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   box-shadow: 0 6px 18px rgba(255, 94, 126, 0.35);
+  /* The glow follows the chosen accent; browsers without color-mix keep the line above. */
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-2) 35%, transparent);
 }
 .nav-links { display: flex; gap: 4px; flex-wrap: wrap; }
 .nav-links a, .nav-links button {
@@ -197,6 +201,13 @@ input, select { font: inherit; }
 .theme-group { display: flex; flex-direction: column; gap: 6px; }
 .theme-group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-faint); }
 .theme-season { display: block; margin-top: 2px; }
+/* The accent picker: one round swatch per palette. Each swatch carries data-accent, so the
+   accent blocks at the end of this file repaint its dot with the pair the current scheme
+   would actually use. The pressed ring is --fg, not the accent, so it reads under every pair. */
+.accent-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.accent-swatch { width: 32px; height: 32px; padding: 3px; border-radius: 50%; border: 2px solid transparent; background: transparent; cursor: pointer; }
+.accent-swatch i { display: block; width: 100%; height: 100%; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.accent-swatch[aria-pressed="true"] { border-color: var(--fg); }
 
 /* Switch rows. */
 .switch-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
@@ -213,7 +224,8 @@ input, select { font: inherit; }
   background: var(--fg-muted); transition: transform 0.2s var(--ease), background-color 0.2s var(--ease);
 }
 .switch[aria-checked="true"] { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-.switch[aria-checked="true"]::after { transform: translateX(20px); background: #fff; }
+/* The thumb is the accent ink, so it is covered by the same ink-on-accent contrast check as button text. */
+.switch[aria-checked="true"]::after { transform: translateX(20px); background: var(--accent-ink); }
 
 /* Provider cards */
 .provider { display: flex; align-items: center; gap: 14px; }
@@ -446,6 +458,7 @@ input, select { font: inherit; }
   box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--accent);
 }
+:root[data-theme="wire"] .accent-swatch i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); }
 
 :root[data-theme="wire"] .switch { background: transparent; box-shadow: inset 0 0 0 1px var(--border); }
 :root[data-theme="wire"] .switch::after { background: var(--fg-faint); }
@@ -489,3 +502,100 @@ input, select { font: inherit; }
   box-shadow: inset 0 0 0 1px var(--brand-wire);
   color: var(--brand-wire);
 }
+
+/* ---- Accents ------------------------------------------------------------
+   One block per accent per colour scheme. data-accent is set on <html> from the saved
+   preference (omitted for the default, so the theme blocks above stay the source of truth)
+   and on every picker swatch, whose dot then previews the pair this scheme would use. The
+   base block is the dark pair; the scheme blocks are tuned for light, dusk and wire and win
+   by specificity ((0,3,0) over the theme blocks' (0,2,0)). This section must stay after every
+   theme block: the base block ties with :root at (0,1,0) and wins by order alone.
+   test/contrast.test.ts reads every block here. */
+[data-accent="apricot"] { --accent: #ffb347; --accent-2: #ff5e7e; --accent-ink: #1a0a10; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="apricot"],
+  :root:not([data-theme]) [data-accent="apricot"] { --accent: #cc6a06; --accent-2: #e84b74; --accent-ink: #1a0a10; }
+}
+:root[data-theme="light"][data-accent="apricot"],
+:root[data-theme="light"] [data-accent="apricot"] { --accent: #cc6a06; --accent-2: #e84b74; --accent-ink: #1a0a10; }
+:root[data-theme="dusk"][data-accent="apricot"],
+:root[data-theme="dusk"] [data-accent="apricot"] { --accent: #ffb88a; --accent-2: #ff8fa3; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="apricot"],
+:root[data-theme="wire"] [data-accent="apricot"] { --accent: #ffd9a8; --accent-2: #ffbccb; --accent-ink: #050507; }
+[data-accent="ember"] { --accent: #ff7a4d; --accent-2: #ffc25c; --accent-ink: #1a0a08; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="ember"],
+  :root:not([data-theme]) [data-accent="ember"] { --accent: #ee4a28; --accent-2: #c87006; --accent-ink: #1a0a08; }
+}
+:root[data-theme="light"][data-accent="ember"],
+:root[data-theme="light"] [data-accent="ember"] { --accent: #ee4a28; --accent-2: #c87006; --accent-ink: #1a0a08; }
+:root[data-theme="dusk"][data-accent="ember"],
+:root[data-theme="dusk"] [data-accent="ember"] { --accent: #ffa58a; --accent-2: #ffd18f; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="ember"],
+:root[data-theme="wire"] [data-accent="ember"] { --accent: #ffc9b8; --accent-2: #ffe3b8; --accent-ink: #050507; }
+[data-accent="gold"] { --accent: #ffd84f; --accent-2: #ff9e3d; --accent-ink: #1a1004; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="gold"],
+  :root:not([data-theme]) [data-accent="gold"] { --accent: #a67e04; --accent-2: #ea5406; --accent-ink: #1a1004; }
+}
+:root[data-theme="light"][data-accent="gold"],
+:root[data-theme="light"] [data-accent="gold"] { --accent: #a67e04; --accent-2: #ea5406; --accent-ink: #1a1004; }
+:root[data-theme="dusk"][data-accent="gold"],
+:root[data-theme="dusk"] [data-accent="gold"] { --accent: #ffe08f; --accent-2: #ffc07f; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="gold"],
+:root[data-theme="wire"] [data-accent="gold"] { --accent: #fff1b8; --accent-2: #ffdcb8; --accent-ink: #050507; }
+[data-accent="lime"] { --accent: #c8f25e; --accent-2: #5fe38f; --accent-ink: #0c1206; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="lime"],
+  :root:not([data-theme]) [data-accent="lime"] { --accent: #5c9210; --accent-2: #189a42; --accent-ink: #0c1206; }
+}
+:root[data-theme="light"][data-accent="lime"],
+:root[data-theme="light"] [data-accent="lime"] { --accent: #5c9210; --accent-2: #189a42; --accent-ink: #0c1206; }
+:root[data-theme="dusk"][data-accent="lime"],
+:root[data-theme="dusk"] [data-accent="lime"] { --accent: #d9f7a0; --accent-2: #a3ecbc; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="lime"],
+:root[data-theme="wire"] [data-accent="lime"] { --accent: #e8f9c4; --accent-2: #c9f2d6; --accent-ink: #050507; }
+[data-accent="mint"] { --accent: #5eecb8; --accent-2: #4fd0ff; --accent-ink: #061410; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="mint"],
+  :root:not([data-theme]) [data-accent="mint"] { --accent: #0c9668; --accent-2: #0a90bc; --accent-ink: #061410; }
+}
+:root[data-theme="light"][data-accent="mint"],
+:root[data-theme="light"] [data-accent="mint"] { --accent: #0c9668; --accent-2: #0a90bc; --accent-ink: #061410; }
+:root[data-theme="dusk"][data-accent="mint"],
+:root[data-theme="dusk"] [data-accent="mint"] { --accent: #9cf0d0; --accent-2: #92e3ff; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="mint"],
+:root[data-theme="wire"] [data-accent="mint"] { --accent: #c8f6e6; --accent-2: #c4edff; --accent-ink: #050507; }
+[data-accent="sky"] { --accent: #63c7ff; --accent-2: #8f8bff; --accent-ink: #0a101a; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="sky"],
+  :root:not([data-theme]) [data-accent="sky"] { --accent: #0e88e0; --accent-2: #7a7ae6; --accent-ink: #0a101a; }
+}
+:root[data-theme="light"][data-accent="sky"],
+:root[data-theme="light"] [data-accent="sky"] { --accent: #0e88e0; --accent-2: #7a7ae6; --accent-ink: #0a101a; }
+:root[data-theme="dusk"][data-accent="sky"],
+:root[data-theme="dusk"] [data-accent="sky"] { --accent: #9ed8ff; --accent-2: #b6b3ff; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="sky"],
+:root[data-theme="wire"] [data-accent="sky"] { --accent: #c6e7ff; --accent-2: #d3d1ff; --accent-ink: #050507; }
+[data-accent="violet"] { --accent: #b990ff; --accent-2: #ff7ad1; --accent-ink: #100a1a; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="violet"],
+  :root:not([data-theme]) [data-accent="violet"] { --accent: #9e68e8; --accent-2: #e840b0; --accent-ink: #100a1a; }
+}
+:root[data-theme="light"][data-accent="violet"],
+:root[data-theme="light"] [data-accent="violet"] { --accent: #9e68e8; --accent-2: #e840b0; --accent-ink: #100a1a; }
+:root[data-theme="dusk"][data-accent="violet"],
+:root[data-theme="dusk"] [data-accent="violet"] { --accent: #cfb3ff; --accent-2: #ffa8de; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="violet"],
+:root[data-theme="wire"] [data-accent="violet"] { --accent: #dfcfff; --accent-2: #ffcaea; --accent-ink: #050507; }
+[data-accent="rose"] { --accent: #ff7eb6; --accent-2: #c98bff; --accent-ink: #1a0a14; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme])[data-accent="rose"],
+  :root:not([data-theme]) [data-accent="rose"] { --accent: #e84088; --accent-2: #c258e6; --accent-ink: #1a0a14; }
+}
+:root[data-theme="light"][data-accent="rose"],
+:root[data-theme="light"] [data-accent="rose"] { --accent: #e84088; --accent-2: #c258e6; --accent-ink: #1a0a14; }
+:root[data-theme="dusk"][data-accent="rose"],
+:root[data-theme="dusk"] [data-accent="rose"] { --accent: #ffa6d2; --accent-2: #dcaaff; --accent-ink: #1a1030; }
+:root[data-theme="wire"][data-accent="rose"],
+:root[data-theme="wire"] [data-accent="rose"] { --accent: #ffc6dd; --accent-2: #e9ccff; --accent-ink: #050507; }

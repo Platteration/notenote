@@ -202,7 +202,7 @@ version cannot be recovered. Visit history is included in exports and removed wi
 
 ## Appearance
 
-Settings carries five themes — four core and one seasonal — a reduce-motion switch that also
+Settings carries five themes — four core and one seasonal — eight accent palettes, a reduce-motion switch that also
 honours the OS preference, opt-out haptics and an opt-in chime. Preferences are applied server-side, so there is no flash
 of the wrong theme on load.
 
@@ -214,10 +214,21 @@ of the wrong theme on load.
 | Wire | Black ground, white line work, tinted accents |
 | Dusk | Deep indigo, lavender text, apricot accents. The Autumn 2026 seasonal, free to everyone |
 
-Every theme is checked against WCAG AA. `test/contrast.test.ts` computes the real ratios from
-the stylesheet — flattening the translucent badge pills onto their surface the way a browser
-does — and fails if any text token drops below 4.5:1. An axe sweep across all pages in every
-theme reports no serious violations.
+**Accent.** Under the theme row, a row of swatches picks the pair behind the brand mark, primary
+buttons, switches, field focus borders and the scroll's time bar: Apricot (the default), Ember,
+Gold, Lime, Mint, Sky, Violet and Rose. Each accent is four pairs, one per colour scheme, so
+Wire gets a pale tint used as line work and Light a deep tone whose button text stays readable.
+It is applied as `data-accent` on `<html>` the same way the theme is, omitted for the default,
+and the landing and sign-in pages always use the default.
+
+Every theme and every accent is checked against WCAG AA. `test/contrast.test.ts` computes the
+real ratios from the stylesheet — flattening the translucent badge pills onto their surface the
+way a browser does — and fails if any text token drops below 4.5:1, or if an accent pair fails
+under any scheme: button ink on both ends of the gradient (4.5:1, which also covers the switch
+thumb), the field focus border on the input surface (3:1), the pair on the card, the page and
+the black scroll (3:1), and on Wire the accent as text (4.5:1). The block that System resolves
+to on a light OS is parsed as its own scheme and must match the pinned Light block token for
+token.
 
 **Wire** is structural rather than a palette swap: every surface is described by its outline
 instead of a fill, buttons and switches become line work, and accents are pale tints used only
@@ -235,7 +246,10 @@ bundle. A test enforces that.
 Themes are a catalogue, so a new one each season is a two-file change:
 
 1. Add a `:root[data-theme="<id>"]` block to `src/app/globals.css` defining every token the
-   dark `:root` block defines (the Dusk block is the template — it is token-only).
+   dark `:root` block defines (the Dusk block is the template — it is token-only), and, at the
+   end of the Accents section, one block per entry in `ACCENT_CATALOGUE` for the new theme
+   (`:root[data-theme="<id>"][data-accent="<accent>"], :root[data-theme="<id>"] [data-accent="<accent>"]`;
+   copy the Apricot set as a start). The contrast test fails loudly for a missing one.
 2. Add one entry to `THEME_CATALOGUE` in `src/lib/theme.ts`: `id`, `label`, `note`, `kind`
    (`core` or `seasonal`), `season` and `releasedAt` for a seasonal one, `tier`, and `badges`.
 
@@ -244,6 +258,19 @@ badge tokens against its own surfaces; `test/theme.test.ts` checks the metadata;
 picker and the persisted preference need no change. Two conventions to know: `dark` has no block
 because it *is* the `:root` defaults, and `system` has no block because it is the absence of the
 attribute. The `tier` field is recorded but not enforced — nothing is gated.
+
+### Adding an accent
+
+1. Add five blocks to the Accents section at the end of `src/app/globals.css`, following the
+   Apricot set: the base dark pair, the OS-light copy inside the `prefers-color-scheme: light`
+   media query, and one block each for the pinned light, dusk and wire themes. Keep the self
+   selector first on its line and the descendant selector (`… [data-accent="<id>"]`) second — the
+   picker swatch relies on it.
+2. Add one `{ id, label }` entry to `ACCENT_CATALOGUE` in `src/lib/accent.ts` (a leaf module
+   with no imports, enforced by `test/accent.test.ts`).
+
+Then `npm test`: the contrast test checks all five blocks against their scheme's surfaces, and
+the picker and the persisted preference need no change.
 
 ## API
 
@@ -287,7 +314,7 @@ npm run check       # lint + typecheck + test, what CI runs
 hour is shut by default, two demo platforms produce a balanced short-form feed, a clip saves
 to the shelf, a clip from someone else's feed is refused, the hour locks again once it has
 passed, and sign-in throttling engages. It also verifies empty-feed recovery, concurrent requests,
-watch history, mute persistence, theme settings, export, password changes, session revocation,
+watch history, mute persistence, theme and accent settings (including a rejected accent), export, password changes, session revocation,
 sign-out/sign-in and disconnection. It creates a unique test account and removes it afterward.
 Run against a local/test instance: registration and sign-in rate limits still apply to repeated runs.
 Set `BASE` to test another local port. The old Bash smoke script remains for compatibility.

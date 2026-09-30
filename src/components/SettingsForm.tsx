@@ -6,6 +6,7 @@ import { Countdown } from "./Countdown";
 import { NotificationSetting } from "./NotificationSetting";
 import { SecurityPanel } from "./SecurityPanel";
 import { chime, haptic } from "@/lib/effects";
+import { ACCENT_CATALOGUE, DEFAULT_ACCENT } from "@/lib/accent";
 import { requestJson } from "@/lib/client-api";
 import type { Prefs, Settings } from "@/lib/settings";
 import { THEME_CATALOGUE, THEME_NOTES, themeMeta, type ThemeMeta } from "@/lib/theme";
@@ -67,6 +68,8 @@ export function SettingsForm({
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefsBusy, setPrefsBusy] = useState(false);
+  /** Appearance errors render beside the control they came from, not in the hour form. */
+  const [prefsMsg, setPrefsMsg] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -88,7 +91,7 @@ export function SettingsForm({
   async function updatePrefs(patch: Partial<Prefs>) {
     if (prefsBusy) return;
     setPrefsBusy(true);
-    setMsg(null);
+    setPrefsMsg(null);
     try {
     await requestJson("/api/settings", {
       method: "PUT",
@@ -102,6 +105,10 @@ export function SettingsForm({
       if (patch.theme === "system") root.removeAttribute("data-theme");
       else root.setAttribute("data-theme", patch.theme);
     }
+    if (patch.accent !== undefined) {
+      if (patch.accent === DEFAULT_ACCENT) root.removeAttribute("data-accent");
+      else root.setAttribute("data-accent", patch.accent);
+    }
     if (patch.reduceMotion !== undefined) {
       if (patch.reduceMotion) root.setAttribute("data-reduce-motion", "true");
       else root.removeAttribute("data-reduce-motion");
@@ -109,7 +116,7 @@ export function SettingsForm({
     if (patch.haptics) haptic(next, 12);
     if (patch.sound) chime(next, "open");
     } catch (err) {
-      setMsg({ kind: "err", text: (err as Error).message });
+      setPrefsMsg((err as Error).message);
     } finally { setPrefsBusy(false); }
   }
 
@@ -208,6 +215,27 @@ export function SettingsForm({
           {THEME_NOTES[prefs.theme]}
           {currentTheme.season && <span className="theme-season">{currentTheme.season} seasonal</span>}
         </p>
+        <div className="theme-group" style={{ marginTop: 14 }}>
+          <span className="theme-group-label" id="accent-label">
+            Accent
+          </span>
+          <div className="accent-picker" role="group" aria-labelledby="accent-label">
+            {ACCENT_CATALOGUE.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                className="accent-swatch"
+                data-accent={a.id}
+                aria-pressed={prefs.accent === a.id}
+                aria-label={a.label}
+                title={a.label}
+                onClick={() => void updatePrefs({ accent: a.id })}
+              >
+                <i aria-hidden />
+              </button>
+            ))}
+          </div>
+        </div>
         <div style={{ marginTop: 8 }}>
           <Switch
             label="Reduce motion"
@@ -228,6 +256,7 @@ export function SettingsForm({
             onChange={(v) => void updatePrefs({ sound: v })}
           />
         </div>
+        {prefsMsg && <p className="error" role="alert">{prefsMsg}</p>}
       </div>
 
       <div className="card">

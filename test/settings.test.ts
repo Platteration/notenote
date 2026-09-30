@@ -6,6 +6,8 @@ process.env.SESSION_SECRET = "test-secret-for-settings-tests";
 const { signUp } = await import("@/lib/auth");
 const { DEFAULT_PREFS, getSettings, saveSettings } = await import("@/lib/settings");
 const { THEMES } = await import("@/lib/theme");
+const { ACCENTS } = await import("@/lib/accent");
+const { getDb } = await import("@/lib/db");
 
 let userId: string;
 
@@ -46,6 +48,31 @@ describe("preferences", () => {
 
   it("rejects an unknown theme", () => {
     expect(() => saveSettings(userId, { prefs: { theme: "neon" as "dark" } })).toThrow(/theme/i);
+  });
+
+  it("starts on the accent the themes carry themselves", () => {
+    expect(DEFAULT_PREFS.accent).toBe("apricot");
+  });
+
+  it("accepts every offered accent", () => {
+    for (const accent of ACCENTS) {
+      saveSettings(userId, { prefs: { accent } });
+      expect(getSettings(userId).prefs.accent).toBe(accent);
+    }
+    expect(ACCENTS).toContain("sky");
+  });
+
+  it("rejects an unknown accent", () => {
+    expect(() => saveSettings(userId, { prefs: { accent: "neon" as "sky" } })).toThrow(/accent/i);
+  });
+
+  it("falls back to the default accent when the stored value is unknown, keeping the rest", () => {
+    // A stored preference from a build that offered an accent this one no longer does must not
+    // break settings, the layout or the data export: it degrades key by key.
+    getDb().prepare("UPDATE settings SET prefs = ? WHERE user_id = ?").run('{"theme":"wire","accent":"neon"}', userId);
+    const prefs = getSettings(userId).prefs;
+    expect(prefs.accent).toBe("apricot");
+    expect(prefs.theme).toBe("wire");
   });
 
   it("still enforces the hour rules", () => {

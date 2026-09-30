@@ -1,3 +1,4 @@
+import { DEFAULT_ACCENT, isAccent, type Accent } from "./accent";
 import { getDb, now, type SettingsRow } from "./db";
 import { isTheme, THEMES, type Theme } from "./theme";
 import { isValidTimeZone, parseWindowStart } from "./window";
@@ -16,6 +17,8 @@ export const MAX_FEED_SIZE = 80;
  */
 export interface Prefs {
   theme: Theme;
+  /** Accent pair drawn over the theme; see src/lib/accent.ts. */
+  accent: Accent;
   /** Turn off gradient animation, smooth scrolling and transitions. */
   reduceMotion: boolean;
   /** Light taps as clips pass, a longer pulse in the final minute (mobile only). */
@@ -24,7 +27,7 @@ export interface Prefs {
   sound: boolean;
 }
 
-export const DEFAULT_PREFS: Prefs = { theme: "system", reduceMotion: false, haptics: true, sound: false };
+export const DEFAULT_PREFS: Prefs = { theme: "system", accent: DEFAULT_ACCENT, reduceMotion: false, haptics: true, sound: false };
 
 export interface Settings {
   timezone: string;
@@ -39,6 +42,7 @@ function parsePrefs(raw: string | null | undefined): Prefs {
     const parsed = JSON.parse(raw) as Partial<Prefs>;
     return {
       theme: isTheme(parsed.theme) ? parsed.theme : DEFAULT_PREFS.theme,
+      accent: isAccent(parsed.accent) ? parsed.accent : DEFAULT_PREFS.accent,
       reduceMotion: typeof parsed.reduceMotion === "boolean" ? parsed.reduceMotion : DEFAULT_PREFS.reduceMotion,
       haptics: typeof parsed.haptics === "boolean" ? parsed.haptics : DEFAULT_PREFS.haptics,
       sound: typeof parsed.sound === "boolean" ? parsed.sound : DEFAULT_PREFS.sound,
@@ -80,6 +84,10 @@ export function saveSettings(userId: string, input: Partial<Omit<Settings, "pref
     if (p.theme !== undefined) {
       if (!isTheme(p.theme)) throw new Error("Unknown theme");
       next.prefs.theme = p.theme;
+    }
+    if (p.accent !== undefined) {
+      if (!isAccent(p.accent)) throw new Error("Unknown accent");
+      next.prefs.accent = p.accent;
     }
     for (const key of ["reduceMotion", "haptics", "sound"] as const) {
       if (p[key] !== undefined) next.prefs[key] = Boolean(p[key]);

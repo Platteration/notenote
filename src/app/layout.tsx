@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Sora } from "next/font/google";
 import "./globals.css";
+import { DEFAULT_ACCENT } from "@/lib/accent";
 import { currentUser } from "@/lib/session";
 import { DEFAULT_PREFS, getSettings } from "@/lib/settings";
 
@@ -33,6 +34,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       lang="en"
       className={display.variable}
       data-theme={prefs.theme === "system" ? undefined : prefs.theme}
+      data-accent={prefs.accent === DEFAULT_ACCENT ? undefined : prefs.accent}
       data-reduce-motion={prefs.reduceMotion ? "true" : undefined}
       style={{ ["--font-display" as string]: `var(--font-display-face), ${"ui-sans-serif, system-ui, sans-serif"}` }}
     >
