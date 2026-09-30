@@ -191,8 +191,8 @@ watching more.
 
 ## Appearance
 
-Settings carries four themes, a reduce-motion switch that also honours the OS preference,
-opt-out haptics and an opt-in chime. Preferences are applied server-side, so there is no flash
+Settings carries five themes — four core and one seasonal — a reduce-motion switch that also
+honours the OS preference, opt-out haptics and an opt-in chime. Preferences are applied server-side, so there is no flash
 of the wrong theme on load.
 
 | Theme | What it is |
@@ -201,11 +201,12 @@ of the wrong theme on load.
 | Dark | Dark surfaces, full-colour platform marks |
 | Light | Warm paper tones for daylight |
 | Wire | Black ground, white line work, tinted accents |
+| Dusk | Deep indigo, lavender text, apricot accents. The Autumn 2026 seasonal, free to everyone |
 
 Every theme is checked against WCAG AA. `test/contrast.test.ts` computes the real ratios from
 the stylesheet — flattening the translucent badge pills onto their surface the way a browser
-does — and fails if any text token drops below 4.5:1. An axe sweep across all pages in all
-three themes reports no serious violations.
+does — and fails if any text token drops below 4.5:1. An axe sweep across all pages in every
+theme reports no serious violations.
 
 **Wire** is structural rather than a palette swap: every surface is described by its outline
 instead of a fill, buttons and switches become line work, and accents are pale tints used only
@@ -217,6 +218,21 @@ test asserts every one of them clears a luminance floor.
 Theme identity lives in `src/lib/theme.ts`, deliberately a leaf module with no imports, so
 client components can read the theme list without pulling the database layer into the browser
 bundle. A test enforces that.
+
+### Adding a theme
+
+Themes are a catalogue, so a new one each season is a two-file change:
+
+1. Add a `:root[data-theme="<id>"]` block to `src/app/globals.css` defining every token the
+   dark `:root` block defines (the Dusk block is the template — it is token-only).
+2. Add one entry to `THEME_CATALOGUE` in `src/lib/theme.ts`: `id`, `label`, `note`, `kind`
+   (`core` or `seasonal`), `season` and `releasedAt` for a seasonal one, `tier`, and `badges`.
+
+Then `npm test`. `test/contrast.test.ts` reads the catalogue and checks the new block's text and
+badge tokens against its own surfaces; `test/theme.test.ts` checks the metadata; the settings
+picker and the persisted preference need no change. Two conventions to know: `dark` has no block
+because it *is* the `:root` defaults, and `system` has no block because it is the absence of the
+attribute. The `tier` field is recorded but not enforced — nothing is gated.
 
 ## API
 

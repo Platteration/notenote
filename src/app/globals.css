@@ -68,6 +68,31 @@
   color-scheme: light;
 }
 
+/* ---- Dusk (Autumn 2026) -------------------------------------------------
+   Deep indigo with apricot accents: an evening mood for an hour that opens at
+   night. Token-only, no structural rules, so it doubles as the template for a
+   seasonal theme: a block like this plus one entry in src/lib/theme.ts. The
+   contrast test then checks every text token against these surfaces. */
+:root[data-theme="dusk"] {
+  --bg: #12122a;
+  --bg-elev: #1b1b3a;
+  --bg-elev-2: #24244a;
+  --fg: #ece8ff;
+  --fg-muted: #b6b0dc;
+  --fg-faint: #948ec0;
+  --badge-demo-ink: #ffc79e;
+  --badge-live-ink: #93e9c6;
+  --badge-off-ink: #b6b0dc;
+  --accent: #ffb88a;
+  --accent-2: #ff8fa3;
+  --accent-ink: #1a1030;
+  --ok: #7fe0b8;
+  --danger: #ff9b9b;
+  --border: rgba(200, 190, 255, 0.12);
+  --shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }
 body { min-height: 100dvh; -webkit-font-smoothing: antialiased; }
@@ -166,6 +191,12 @@ input, select { font: inherit; }
   cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap;
 }
 .segmented button[aria-pressed="true"] { background: var(--bg-elev); color: var(--fg); box-shadow: var(--shadow); }
+/* The theme picker: core themes in one row, seasonal ones in a labelled second row. Both rows
+   are .segmented, so the wire theme's outline treatment applies to the new row unchanged. */
+.theme-picker { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.theme-group { display: flex; flex-direction: column; gap: 6px; }
+.theme-group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-faint); }
+.theme-season { display: block; margin-top: 2px; }
 
 /* Switch rows. */
 .switch-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }

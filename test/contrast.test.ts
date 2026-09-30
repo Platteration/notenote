@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { THEME_CATALOGUE } from "@/lib/theme";
 
 /**
  * Colour contrast is easy to regress by nudging one token, and a person notices only once
@@ -50,11 +51,17 @@ function tokensOf(selector: string): Record<string, string> {
   return out;
 }
 
-const THEMES = [
-  { name: "dark", selector: ":root {" },
-  { name: "light", selector: ':root[data-theme="light"] {' },
-  { name: "wire", selector: ':root[data-theme="wire"] {' },
-];
+/**
+ * Every theme in the catalogue is checked, so adding one to theme.ts is enough to bring it
+ * under test — and a catalogue entry with no stylesheet block fails loudly in tokensOf.
+ * "dark" is the bare :root defaults; "system" is the absence of the attribute and has no
+ * block, so it is the one entry skipped.
+ */
+const THEMES = THEME_CATALOGUE.filter((t) => t.id !== "system").map((t) => ({
+  name: t.id,
+  selector: t.id === "dark" ? ":root {" : `:root[data-theme="${t.id}"] {`,
+  badges: t.badges,
+}));
 
 // Badge backgrounds as declared in the stylesheet, over the card surface.
 const BADGES: Array<{ ink: string; tint: Rgb; alpha: number }> = [
@@ -63,7 +70,7 @@ const BADGES: Array<{ ink: string; tint: Rgb; alpha: number }> = [
   { ink: "--badge-off-ink", tint: [128, 128, 150], alpha: 0.12 },
 ];
 
-describe.each(THEMES)("$name theme contrast", ({ name, selector }) => {
+describe.each(THEMES)("$name theme contrast", ({ name, selector, badges }) => {
   const tokens = tokensOf(selector);
   // The wireframe theme draws cards as outlines, so text sits on the page itself.
   const surface = parseHex(tokens["--bg-elev"]?.startsWith("#") ? tokens["--bg-elev"] : tokens["--bg"]);
@@ -82,8 +89,8 @@ describe.each(THEMES)("$name theme contrast", ({ name, selector }) => {
   });
 
   it.each(BADGES)("$ink clears WCAG AA on its own tinted pill", ({ ink, tint, alpha }) => {
-    // Badge pills are translucent in dark and light; the wireframe theme leaves them clear.
-    const pill = name === "wire" ? surface : composite(tint, alpha, surface);
+    // Most themes tint the pill; a theme that draws badges as outlines leaves the surface bare.
+    const pill = badges === "outline" ? surface : composite(tint, alpha, surface);
     expect(contrast(parseHex(tokens[ink]), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });

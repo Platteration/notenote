@@ -7,8 +7,11 @@ import { NotificationSetting } from "./NotificationSetting";
 import { SecurityPanel } from "./SecurityPanel";
 import { chime, haptic } from "@/lib/effects";
 import type { Prefs, Settings } from "@/lib/settings";
-import { THEME_LABELS, THEME_NOTES, THEMES } from "@/lib/theme";
+import { THEME_CATALOGUE, THEME_NOTES, themeMeta, type ThemeMeta } from "@/lib/theme";
 import type { DailyWindow } from "@/lib/window";
+
+const CORE_THEMES = THEME_CATALOGUE.filter((t) => t.kind === "core");
+const SEASONAL_THEMES = THEME_CATALOGUE.filter((t) => t.kind === "seasonal");
 
 function Switch({
   checked,
@@ -70,6 +73,13 @@ export function SettingsForm({
     const list = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : ["UTC"];
     return list.includes(timezone) ? list : [timezone, ...list];
   }, [timezone]);
+
+  const currentTheme = themeMeta(prefs.theme);
+  const themeButton = (t: ThemeMeta) => (
+    <button key={t.id} type="button" aria-pressed={prefs.theme === t.id} onClick={() => void updatePrefs({ theme: t.id })}>
+      {t.label}
+    </button>
+  );
 
   /** Preferences save immediately and apply to the live page, so the change is visible. */
   async function updatePrefs(patch: Partial<Prefs>) {
@@ -172,15 +182,24 @@ export function SettingsForm({
       <div className="card">
         <h2>Appearance</h2>
         <p style={{ marginBottom: 14 }}>The scroll itself stays dark. This changes everything around it.</p>
-        <div className="segmented" role="group" aria-label="Theme">
-          {THEMES.map((t) => (
-            <button key={t} type="button" aria-pressed={prefs.theme === t} onClick={() => void updatePrefs({ theme: t })}>
-              {THEME_LABELS[t]}
-            </button>
-          ))}
+        <div className="theme-picker">
+          <div className="segmented" role="group" aria-label="Theme">
+            {CORE_THEMES.map(themeButton)}
+          </div>
+          {SEASONAL_THEMES.length > 0 && (
+            <div className="theme-group">
+              <span className="theme-group-label" id="seasonal-themes">
+                Seasonal
+              </span>
+              <div className="segmented" role="group" aria-labelledby="seasonal-themes">
+                {SEASONAL_THEMES.map(themeButton)}
+              </div>
+            </div>
+          )}
         </div>
         <p className="hint" style={{ marginTop: 8 }}>
           {THEME_NOTES[prefs.theme]}
+          {currentTheme.season && <span className="theme-season">{currentTheme.season} seasonal</span>}
         </p>
         <div style={{ marginTop: 8 }}>
           <Switch
