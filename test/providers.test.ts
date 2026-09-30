@@ -49,6 +49,9 @@ describe("native deep links", () => {
     expect(detectPlatform("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")).toBe("ios");
     expect(detectPlatform("Mozilla/5.0 (Linux; Android 14; Pixel 8)")).toBe("android");
     expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe("other");
+    // An iPad asking for the desktop site says "Macintosh"; only its touch points tell it apart.
+    expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)", 5)).toBe("ios");
+    expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)", 0)).toBe("other");
   });
 
   it("builds app schemes per platform", () => {

@@ -13,7 +13,7 @@ import type { MediaItem } from "./providers/types";
  */
 export function openInNativeApp(item: MediaItem): void {
   if (typeof window === "undefined" || item.demo) return;
-  const platform = detectPlatform(navigator.userAgent);
+  const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints);
   const scheme = platform === "other" ? null : nativeUrl(item, platform);
 
   if (!scheme) {

@@ -12,6 +12,7 @@ import { explainReason, reasonBars } from "@/lib/explain";
 import type { FeedPayload } from "@/lib/feed";
 import { openInNativeApp } from "@/lib/open-native";
 import { providerMeta, providerName } from "@/lib/providers/meta";
+import { posterShape, scrollKeyAction, type PosterShape } from "@/lib/scroll-ui";
 import type { MediaItem } from "@/lib/providers/types";
 import type { Prefs } from "@/lib/settings";
 
@@ -52,7 +53,23 @@ function Slide({
 }) {
   const ref = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [showReason, setShowReason] = useState(false);
+  // Posters come in every shape; only the tall ones are cropped to fill the slide.
+  const [shape, setShape] = useState<PosterShape | undefined>();
+  const measure = useCallback((width: number, height: number) => setShape(posterShape(width, height)), []);
+
+  // A cached image, or a video whose metadata arrived before hydration, has already fired the
+  // event the handlers below listen for, so it is measured once after mount as well.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const img = imgRef.current;
+      const video = videoRef.current;
+      if (img?.complete && img.naturalWidth) measure(img.naturalWidth, img.naturalHeight);
+      else if (video && video.readyState >= 1) measure(video.videoWidth, video.videoHeight);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [measure]);
 
   // Only the clip on screen plays, so the hour doesn't cost forty videos of bandwidth.
   useEffect(() => {
@@ -87,7 +104,7 @@ function Slide({
     openInNativeApp(item);
   };
   return (
-    <article className={`slide${muted ? " slide-muted" : ""}`} ref={ref} data-index={index} aria-label={item.title}>
+    <article className={`slide${muted ? " slide-muted" : ""}`} ref={ref} data-index={index} data-poster={shape} aria-label={item.title}>
       {!item.demo && <a
         className="slide-tap"
         href={item.permalink}
@@ -96,6 +113,9 @@ function Slide({
         target="_blank"
         rel="noopener noreferrer"
       />}
+      {item.thumbnailUrl && (
+        <img className="slide-backdrop" src={item.thumbnailUrl} alt="" aria-hidden loading={index < 2 ? "eager" : "lazy"} decoding="async" />
+      )}
       <span className="slide-source">
         <PlatformLogo provider={item.provider} size={44} title={`From ${name}`} />
       </span>
@@ -109,9 +129,16 @@ function Slide({
             muted
             loop
             preload={index < 2 ? "auto" : "none"}
+            onLoadedMetadata={(e) => measure(e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
           />
         ) : item.thumbnailUrl ? (
-          <img src={item.thumbnailUrl} alt="" loading={index < 2 ? "eager" : "lazy"} />
+          <img
+            ref={imgRef}
+            src={item.thumbnailUrl}
+            alt=""
+            loading={index < 2 ? "eager" : "lazy"}
+            onLoad={(e) => measure(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)}
+          />
         ) : (
           <div className="fallback" style={{ ["--brand" as string]: brand, ["--brand-wire" as string]: brandWire }}>
             ▶
@@ -343,32 +370,41 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
     haptic(prefs, [40, 60, 120]);
   }, [prefs]);
 
-  // Keyboard: ↓/j/space next, ↑/k previous, enter/o open the current clip in its app.
+  /** Move by one clip, or onto the end slide; shared by the keyboard and the stage arrows. */
+  const step = useCallback(
+    (delta: number) => {
+      const next = Math.max(0, Math.min(items.length, current + delta));
+      listRef.current
+        ?.querySelector<HTMLElement>(next === items.length ? ".end-slide" : `[data-index="${next}"]`)
+        ?.scrollIntoView({ block: "start", behavior: scrollBehavior(prefs) });
+    },
+    [current, items.length, prefs],
+  );
+
+  // Keyboard: ↓/j/space next, ↑/k previous, enter/o open the current clip in its app. A focused
+  // button or link keeps Enter and Space; the rest still move, so a click never strands the keys.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (closed) return;
-      const target = e.target as HTMLElement | null;
-      if (e.altKey || e.ctrlKey || e.metaKey || target?.closest("input, textarea, select, button, a, [contenteditable=true]")) return;
-      const go = (delta: number) => {
-        const next = Math.max(0, Math.min(items.length, current + delta));
-        listRef.current
-          ?.querySelector<HTMLElement>(next === items.length ? ".end-slide" : `[data-index="${next}"]`)
-          ?.scrollIntoView({ block: "start", behavior: scrollBehavior(prefs) });
-      };
-      if (e.key === "ArrowDown" || e.key === "j" || e.key === " ") {
-        e.preventDefault();
-        go(1);
-      } else if (e.key === "ArrowUp" || e.key === "k") {
-        e.preventDefault();
-        go(-1);
-      } else if ((e.key === "Enter" || e.key === "o") && items[current]) {
-        e.preventDefault();
-        openInNativeApp(items[current]);
+      const action = scrollKeyAction({
+        key: e.key,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        target: e.target instanceof Element ? e.target : null,
+      });
+      if (!action) return;
+      e.preventDefault();
+      if (action === "next") step(1);
+      else if (action === "prev") step(-1);
+      else {
+        const item = items[current];
+        if (item) openInNativeApp(item);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [closed, current, items, prefs]);
+  }, [closed, current, items, step]);
 
   // Time-remaining bar, plus a single nudge as the last minute begins.
   const [pct, setPct] = useState(100);
@@ -486,6 +522,18 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
           </section>
         )}
       </div>
+
+      {/* Shown only beside the centred stage on wide screens, where there is no swipe. */}
+      {items.length > 0 && (
+        <div className="stage-nav" inert={closed}>
+          <button type="button" className="stage-arrow" aria-label="Previous clip" disabled={current === 0} onClick={() => step(-1)}>
+            ↑
+          </button>
+          <button type="button" className="stage-arrow" aria-label="Next clip" onClick={() => step(1)}>
+            ↓
+          </button>
+        </div>
+      )}
 
       {toast && (
         <div className="toast" role="status">

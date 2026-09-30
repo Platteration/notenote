@@ -92,8 +92,9 @@ Android the app's URL scheme is tried first (`vnd.youtube://`, `twitter://status
 `instagram://media`, `snssdk1233://` for TikTok, `pinterest://pin`, `reddit://`, `fb://`,
 `twitch://`); if nothing claims it within a moment the https permalink is loaded instead, which
 the OS routes to the app through universal/app links when it is installed. On desktop the
-permalink opens in a new tab. Platforms without a dependable scheme (Threads, Snapchat) go
-straight to the permalink.
+permalink opens in a new tab. An iPad counts as iOS here even though Safari on it announces
+itself as a Mac. Platforms without a dependable scheme (Threads, Snapchat) go straight to the
+permalink. On a phone held sideways the text sits in its own column, so tap the clip itself.
 
 Logos are from [Simple Icons](https://simpleicons.org) (CC0).
 
@@ -175,8 +176,21 @@ reports as gone. Without VAPID keys the switch simply reports push as unavailabl
 ## On your phone
 
 The app ships a web manifest, icons and a notifications-only service worker, so "Add to Home
-Screen" installs it as a standalone, portrait-locked app that opens straight on the scroll.
-Inside the scroll, ↑/↓ (or j/k) move between clips and Enter opens the current one in its app.
+Screen" installs it as a standalone app that opens straight on the scroll and follows the
+device's orientation.
+
+Phones in portrait are the reference layout. A phone on its side puts the clip on the left and
+its text in a column on the right, which scrolls on its own when "Why this?" is open. Anything
+wider and taller than a phone (tablets either way round, laptops, desktops, ultrawide, an
+unfolded foldable) shows the scroll as a centred 9:16 stage over a blurred copy of the poster,
+with up and down buttons beside it. Posters that are not tall, such as YouTube and Twitch
+frames, are letterboxed over that blur rather than cropped. Every page keeps its content clear
+of the notch and the home indicator on all four sides.
+
+Inside the scroll, ↑/↓ (or j/k) move between clips, also after you have clicked a button, and
+Enter opens the current one in its app. When a button or link has focus, Enter and Space press
+it instead. `test/layout.test.ts` pins these rules in the stylesheet; how they look was checked
+in a browser at phone, landscape, tablet, desktop and ultrawide sizes.
 
 ## Why this clip?
 
@@ -615,6 +629,7 @@ src/lib/feed.ts     Daily feed generation, freezing, seen tracking
 src/lib/providers/  One OAuth + fetch adapter per platform, the demo catalogue, and
                     meta.ts (client-safe names, logos, native deep links)
 src/lib/open-native.ts  Tap-to-open: app scheme first, permalink fallback
+src/lib/scroll-ui.ts  Pure decisions for the scroll (poster shape, keyboard routing); import-free
 src/lib/library.ts  Saved shelf, muted creators, show-up streaks
 src/lib/push.ts     Web Push subscriptions and the one daily notification
 src/lib/effects.ts  Haptics, chimes and motion preferences

@@ -7,7 +7,6 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "One curated hour of short-form video from your connected social accounts.",
     start_url: "/feed",
     display: "standalone",
-    orientation: "portrait",
     background_color: "#0b0b10",
     theme_color: "#0b0b10",
     icons: [

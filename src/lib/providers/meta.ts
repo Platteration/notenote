@@ -69,8 +69,10 @@ export function providerName(id: string): string {
 
 export type Platform = "ios" | "android" | "other";
 
-export function detectPlatform(userAgent: string): Platform {
+export function detectPlatform(userAgent: string, maxTouchPoints = 0): Platform {
   if (/iPhone|iPad|iPod/i.test(userAgent)) return "ios";
+  // iPadOS asks for desktop sites and presents itself as a Mac; its touch points give it away.
+  if (/Macintosh/i.test(userAgent) && maxTouchPoints > 1) return "ios";
   if (/Android/i.test(userAgent)) return "android";
   return "other";
 }

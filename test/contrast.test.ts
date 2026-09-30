@@ -211,3 +211,54 @@ describe("the stylesheet's structure", () => {
     expect(CSS).toMatch(/\.brand-mark \{[^}]*color-mix\(in srgb, var\(--accent-2\) 35%, transparent\)/);
   });
 });
+
+describe("the scroll's own colours, which ignore the theme", () => {
+  /** The declarations of the first top-level rule whose selector list includes `needle`. */
+  function ruleWith(needle: string, from = 0): { selectors: string; body: string } {
+    const at = CSS.indexOf(needle, from);
+    if (at === -1) throw new Error(`no rule mentioning ${needle}`);
+    const open = CSS.indexOf("{", at);
+    const start = Math.max(CSS.lastIndexOf("}", at), CSS.lastIndexOf("*/", at), CSS.lastIndexOf("{", at)) + 1;
+    const selectors = CSS.slice(start, open).replace(/\/\*[\s\S]*?\*\//g, "").trim();
+    return { selectors, body: CSS.slice(open + 1, CSS.indexOf("}", open)) };
+  }
+  const prop = (body: string, name: string) => {
+    const m = new RegExp(`(?:^|[;\\s])${name}\\s*:\\s*([^;]+);`).exec(body);
+    if (!m) throw new Error(`no ${name}`);
+    return m[1]!.trim();
+  };
+
+  it("draws every button in the scroll white on black, the end slide and the closing ritual included", () => {
+    const { selectors, body } = ruleWith(".end-slide .btn");
+    for (const s of [".slide-actions .btn", ".end-slide .btn", ".closing .btn"]) expect(selectors).toContain(s);
+    const ink = parseHex(prop(body, "color"));
+    const fill = parseHex(prop(body, "background"));
+    expect(contrast(ink, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    // Against the surfaces they sit on, read from the stylesheet rather than assumed.
+    for (const surface of [".slide {", ".closing {"]) {
+      const ground = parseHex(prop(ruleWith(surface).body, "background"));
+      expect(contrast(fill, ground), surface).toBeGreaterThanOrEqual(AA_LARGE);
+    }
+  });
+
+  it("keeps white text readable on the landscape text column, even over a white poster", () => {
+    const media = CSS.indexOf("@media (max-height: 500px) and (orientation: landscape)");
+    expect(media).toBeGreaterThan(-1);
+    const shade = prop(ruleWith(".slide-shade", media).body, "background");
+    const column = Number(/right:\s*(\d+)%/.exec(ruleWith(".slide-media", media).body)?.[1]);
+    const boundary = 100 - column; // where the text column starts, as a percentage of the width
+    const stops = [...shade.matchAll(/rgba\(0, 0, 0, ([\d.]+)\)\s*(\d+)?%?/g)].map((m, i, all) => ({
+      alpha: Number(m[1]),
+      at: m[2] !== undefined ? Number(m[2]) : i === all.length - 1 ? 100 : 0,
+    }));
+    // The lightest point of the shade inside the column is at its left edge.
+    const before = [...stops].reverse().find((s) => s.at <= boundary)!;
+    const after = stops.find((s) => s.at >= boundary)!;
+    const alpha = after.at === before.at ? after.alpha : before.alpha + ((after.alpha - before.alpha) * (boundary - before.at)) / (after.at - before.at);
+    // Worst case: a white poster, which the backdrop's brightness(0.5) takes to mid grey.
+    const ground = composite([0, 0, 0], alpha, [128, 128, 128]);
+    expect(contrast([255, 255, 255], ground), "the title").toBeGreaterThanOrEqual(AA_NORMAL);
+    // The stats line is white at 70%, composited on that same ground.
+    expect(contrast(composite([255, 255, 255], 0.7, ground), ground), "the stats line").toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+});

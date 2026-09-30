@@ -12,8 +12,8 @@ export default async function SavedPage() {
   return (
     <main className="shell">
       <Nav signedIn email={user.email} />
-      <section className="hero" style={{ paddingTop: 16 }}>
-        <h1 style={{ fontSize: 32 }}>Saved</h1>
+      <section className="hero hero-page">
+        <h1>Saved</h1>
         <p>Clips you kept. These stay here whether or not the scroll is open.</p>
       </section>
       <SavedShelf initial={listSaved(user.id)} initialMuted={listMuted(user.id)} />

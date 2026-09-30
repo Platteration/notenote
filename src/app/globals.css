@@ -97,7 +97,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }
-body { min-height: 100dvh; -webkit-font-smoothing: antialiased; }
+/* vh first: a browser without dvh drops the second declaration and keeps the first. */
+body { min-height: 100vh; min-height: 100dvh; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; }
 input, select { font: inherit; }
@@ -125,7 +126,13 @@ input, select { font: inherit; }
   scroll-behavior: auto !important;
 }
 
-.shell { max-width: 640px; margin: 0 auto; padding: 0 20px 80px; }
+/* The app draws under the notch and the home indicator (viewport-fit: cover), so every page
+   keeps its content out of the unsafe area on all four sides. overflow-x: clip keeps the
+   locked screen's glow from widening the page on a phone without making a scroll container. */
+.shell {
+  max-width: 640px; margin: 0 auto; overflow-x: clip;
+  padding: env(safe-area-inset-top) calc(20px + env(safe-area-inset-right)) calc(80px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+}
 
 .nav {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
@@ -144,7 +151,12 @@ input, select { font: inherit; }
   padding: 8px 12px; border-radius: 999px; color: var(--fg-muted); font-size: 14px; font-weight: 600;
   background: transparent; border: none; cursor: pointer;
 }
-.nav-links a[aria-current="page"], .nav-links a:hover, .nav-links button:hover { color: var(--fg); background: var(--bg-elev); }
+.nav-links a[aria-current="page"] { color: var(--fg); background: var(--bg-elev); }
+/* Hover only where a pointer can hover: on a touch screen a tapped pill would otherwise keep
+   this look and read as the current page. */
+@media (hover: hover) {
+  .nav-links a:hover, .nav-links button:hover { color: var(--fg); background: var(--bg-elev); }
+}
 .nav-account {
   padding: 8px 4px; color: var(--fg-muted); font-size: 13px; font-weight: 600;
   max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -152,6 +164,9 @@ input, select { font: inherit; }
 
 .hero { padding: 40px 0 24px; }
 .hero h1 { font-family: var(--font-display); font-size: clamp(36px, 8vw, 56px); line-height: 1.02; letter-spacing: -0.02em; word-spacing: 0.06em; margin: 0 0 16px; font-weight: 700; }
+/* The inner pages' headings: smaller than the landing page's, and reachable by the landscape rule. */
+.hero-page { padding-top: 16px; }
+.hero-page h1 { font-size: 32px; }
 .hero h1 span { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .hero p { font-size: 18px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
 
@@ -180,7 +195,9 @@ input, select { font: inherit; }
   padding: 12px 18px; border-radius: 999px; font-weight: 700; font-size: 15px; cursor: pointer;
   border: 1px solid transparent; background: var(--fg); color: var(--bg); transition: transform 0.1s var(--ease), opacity 0.15s var(--ease);
 }
-.btn:hover { transform: translateY(-1px); }
+@media (hover: hover) {
+  .btn:hover { transform: translateY(-1px); }
+}
 .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .btn-primary { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: var(--accent-ink); }
 .btn-ghost { background: transparent; color: var(--fg); border-color: var(--border); }
@@ -197,7 +214,7 @@ input, select { font: inherit; }
 
 /* Segmented control, used for the theme and reduce-motion pickers. */
 .pref-heading { display: block; font-size: 15px; font-weight: 600; color: var(--fg); margin: 0 0 8px; }
-.segmented { display: inline-flex; flex-wrap: wrap; background: var(--bg-elev-2); border-radius: 999px; padding: 3px; gap: 2px; max-width: 100%; }
+.segmented { display: inline-flex; flex-wrap: wrap; background: var(--bg-elev-2); border-radius: 22px; padding: 3px; gap: 2px; max-width: 100%; }
 .segmented button {
   border: none; background: transparent; color: var(--fg-muted); padding: 7px 13px; border-radius: 999px;
   cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap;
@@ -270,7 +287,8 @@ input, select { font: inherit; }
 /* The scroll */
 .scroll-shell { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column; color-scheme: dark; }
 .scroll-top {
-  position: absolute; top: 0; left: 0; right: 0; z-index: 5; padding: 12px 16px calc(12px + env(safe-area-inset-top));
+  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px calc(16px + env(safe-area-inset-left));
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0)); color: #fff;
   display: flex; flex-direction: column; gap: 8px;
 }
@@ -281,8 +299,10 @@ input, select { font: inherit; }
 .timebar.final > div { background: var(--danger); }
 .scroll-list { flex: 1; overflow-y: auto; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .scroll-list::-webkit-scrollbar { display: none; }
+/* As tall as the scroller it snaps in, so the two can never disagree while a mobile toolbar
+   collapses or a foldable changes posture. */
 .slide {
-  height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; position: relative;
+  height: 100%; scroll-snap-align: start; scroll-snap-stop: always; position: relative;
   display: flex; align-items: flex-end; overflow: hidden; background: #111;
 }
 .slide-muted .slide-media { opacity: 0.35; filter: grayscale(0.8); }
@@ -290,16 +310,25 @@ input, select { font: inherit; }
 .chip-muted { background: rgba(255, 255, 255, 0.28); }
 .slide-tap { position: absolute; inset: 0; z-index: 2; cursor: pointer; }
 .slide-tap:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
-.slide-source { position: absolute; top: calc(64px + env(safe-area-inset-top)); right: 16px; z-index: 4; pointer-events: none; }
+.slide-source { position: absolute; top: calc(64px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); z-index: 4; pointer-events: none; }
 .slide-media { position: absolute; inset: 0; }
 .slide-media img, .slide-media video { width: 100%; height: 100%; object-fit: cover; }
+/* A poster that is not tall is letterboxed rather than cropped to a sliver, over a blurred,
+   darkened copy of itself (.slide-backdrop) that fills the rest. */
+.slide[data-poster="wide"] .slide-media img, .slide[data-poster="wide"] .slide-media video,
+.slide[data-poster="square"] .slide-media img, .slide[data-poster="square"] .slide-media video { object-fit: contain; }
+.slide-backdrop {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none;
+  filter: blur(24px) brightness(0.5); transform: scale(1.1);
+}
+.slide-muted .slide-backdrop { opacity: 0.35; }
 /* No thumbnail: fall back to the platform's own colour rather than a random grey. */
 .slide-media .fallback {
   width: 100%; height: 100%; display: grid; place-items: center; font-size: 64px; color: rgba(255,255,255,0.25);
   background: radial-gradient(circle at 50% 35%, var(--brand, #333), #0a0a0f 75%);
 }
 .slide-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0) 40%, rgba(0,0,0,0.85)); }
-.slide-body { position: relative; z-index: 3; padding: 20px 20px calc(28px + env(safe-area-inset-bottom)); width: 100%; color: #fff; pointer-events: none; }
+.slide-body { position: relative; z-index: 3; padding: 20px calc(20px + env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); width: 100%; color: #fff; pointer-events: none; }
 .slide-body a, .slide-body button { pointer-events: auto; }
 .slide-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; flex-wrap: wrap; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; background: rgba(255,255,255,0.14); backdrop-filter: blur(8px); }
@@ -328,7 +357,9 @@ input, select { font: inherit; }
 .slide-creator { color: rgba(255,255,255,0.8); font-size: 14px; margin: 0 0 14px; }
 .slide-stats { display: flex; gap: 16px; font-size: 13px; color: rgba(255,255,255,0.7); margin-bottom: 16px; font-variant-numeric: tabular-nums; }
 .slide-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-.slide-actions .btn { background: #fff; color: #000; }
+/* The scroll is always black, so its buttons are always white on black. Without the end slide
+   and the closing ritual here, the light theme's --fg/--bg pair drew them near-black on black. */
+.slide-actions .btn, .end-slide .btn, .closing .btn { background: #fff; color: #000; }
 .slide-actions .btn-ghost { background: rgba(255,255,255,0.12); color: #fff; border-color: transparent; }
 .end-slide { justify-content: center; align-items: center; text-align: center; padding: 40px; }
 .end-slide h2 { font-family: var(--font-display); font-size: 32px; margin: 0 0 10px; letter-spacing: -0.015em; word-spacing: 0.06em; color: #fff; }
@@ -337,12 +368,15 @@ input, select { font: inherit; }
 /* ---- The closing ritual -------------------------------------------------
    The hour doesn't slam shut. The clip fades, the recap rises, and the app
    says goodnight. */
+/* A flex column with auto margins centres the ritual when it fits and lets it scroll from the
+   top when it does not, rather than clipping both ends as grid centring did. */
 .closing {
-  position: absolute; inset: 0; z-index: 10; background: #000; display: grid; place-items: center;
-  text-align: center; padding: 40px; color: #fff; animation: fade-to-black 2.6s var(--ease) both;
+  position: absolute; inset: 0; z-index: 10; background: #000; display: flex; flex-direction: column; overflow-y: auto;
+  text-align: center; color: #fff; animation: fade-to-black 2.6s var(--ease) both;
+  padding: calc(40px + env(safe-area-inset-top)) calc(40px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) calc(40px + env(safe-area-inset-left));
 }
 @keyframes fade-to-black { from { opacity: 0; } 55% { opacity: 1; } to { opacity: 1; } }
-.closing-inner { animation: rise 900ms 1.6s var(--ease) both; }
+.closing-inner { margin: auto; animation: rise 900ms 1.6s var(--ease) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 .closing h2 { font-family: var(--font-display); font-size: 34px; margin: 0 0 12px; letter-spacing: -0.015em; word-spacing: 0.06em; }
 .closing .closing-line { color: rgba(255,255,255,0.62); font-size: 16px; margin: 0 0 8px; }
@@ -351,15 +385,17 @@ input, select { font: inherit; }
 .closing .sign-off { color: rgba(255,255,255,0.4); font-size: 14px; margin-top: 22px; letter-spacing: 0.01em; }
 
 .scroll-top-right { display: inline-flex; align-items: center; gap: 8px; }
-.sound-toggle {
+.sound-toggle, .stage-arrow {
   border: none; background: rgba(255,255,255,0.14); color: #fff; width: 30px; height: 30px; border-radius: 50%;
   cursor: pointer; font-size: 14px; line-height: 1; display: grid; place-items: center; backdrop-filter: blur(8px);
 }
 .sound-toggle[aria-pressed="true"] { background: rgba(255,255,255,0.3); }
+.stage-arrow { width: 44px; height: 44px; font-size: 18px; }
+.stage-arrow:disabled { opacity: 0.35; cursor: default; }
 .toast {
   position: absolute; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 8;
   background: rgba(20, 20, 28, 0.94); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 14px; font-weight: 600;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); animation: toast-in 220ms var(--ease) both; max-width: calc(100% - 40px); text-align: center;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); animation: toast-in 220ms var(--ease) both; max-width: calc(100% - 40px - env(safe-area-inset-left) - env(safe-area-inset-right)); text-align: center;
 }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
@@ -425,11 +461,16 @@ input, select { font: inherit; }
   border: 1.5px solid var(--accent);
   box-shadow: none;
 }
-:root[data-theme="wire"] .nav-links a[aria-current="page"],
-:root[data-theme="wire"] .nav-links a:hover,
-:root[data-theme="wire"] .nav-links button:hover {
+:root[data-theme="wire"] .nav-links a[aria-current="page"] {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--border);
+}
+@media (hover: hover) {
+  :root[data-theme="wire"] .nav-links a:hover,
+  :root[data-theme="wire"] .nav-links button:hover {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
 }
 
 /* Buttons are outlines. The primary action is the only tinted one. */
@@ -438,7 +479,9 @@ input, select { font: inherit; }
   color: var(--fg);
   border-color: var(--line-strong);
 }
-:root[data-theme="wire"] .btn:hover { border-color: var(--fg); }
+@media (hover: hover) {
+  :root[data-theme="wire"] .btn:hover { border-color: var(--fg); }
+}
 :root[data-theme="wire"] .btn-primary {
   background: transparent;
   color: var(--accent);
@@ -503,7 +546,7 @@ input, select { font: inherit; }
 /* Inside the scroll the video still carries the picture, so only the chrome is redrawn. */
 :root[data-theme="wire"] .slide-actions .btn { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.7); }
 :root[data-theme="wire"] .slide-actions .btn-ghost { border-color: rgba(255, 255, 255, 0.32); color: rgba(255, 255, 255, 0.82); }
-:root[data-theme="wire"] .sound-toggle { background: transparent; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5); }
+:root[data-theme="wire"] .sound-toggle, :root[data-theme="wire"] .stage-arrow { background: transparent; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5); }
 :root[data-theme="wire"] .toast { background: #050507; box-shadow: inset 0 0 0 1px var(--line-strong); }
 :root[data-theme="wire"] .slide-media .fallback {
   background: #050507;
@@ -607,3 +650,61 @@ input, select { font: inherit; }
 :root[data-theme="dusk"] [data-accent="rose"] { --accent: #ffa6d2; --accent-2: #dcaaff; --accent-ink: #1a1030; }
 :root[data-theme="wire"][data-accent="rose"],
 :root[data-theme="wire"] [data-accent="rose"] { --accent: #ffc6dd; --accent-2: #e9ccff; --accent-ink: #050507; }
+
+/* ---- Shapes -------------------------------------------------------------
+   Phone portrait is the reference layout above. Two regimes adapt it, and they never
+   overlap: a phone on its side, and anything wide and tall enough for a centred 9:16 stage
+   (tablets either way round, laptops, desktops, ultrawide, an unfolded foldable). Only layout
+   properties change here, so the wire theme's paint rules keep winning unchanged. */
+.stage-nav { display: none; }
+
+/* A phone on its side: the clip on the left, never cropped; its text in a column on the
+   right that scrolls on its own when "Why this?" is open, with a shade of its own so the
+   white text never sits on bare poster pixels. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .slide-media { right: 44%; }
+  .slide-media img, .slide-media video { object-fit: contain; }
+  .slide-shade { background: linear-gradient(90deg, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.75) 56%, rgba(0, 0, 0, 0.85)); }
+  .slide-body {
+    align-self: stretch; width: 44%; margin-left: auto; display: flex; flex-direction: column;
+    overflow-y: auto; pointer-events: auto;
+    padding: calc(68px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) 16px;
+  }
+  .slide-meta { margin-top: auto; }
+  .slide-title { font-size: 17px; }
+  .slide-creator { margin-bottom: 8px; }
+  .slide-stats { margin-bottom: 10px; }
+  .slide-actions .btn { padding: 8px 14px; font-size: 13px; }
+  .slide-source { top: calc(68px + env(safe-area-inset-top)); right: auto; left: calc(16px + env(safe-area-inset-left)); }
+  .toast { bottom: auto; top: calc(68px + env(safe-area-inset-top)); }
+  .end-slide h2, .closing h2 { font-size: 26px; }
+  .closing {
+    padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  }
+  .locked { padding: 12px 0 24px; }
+  .locked .ring { width: 96px; height: 96px; margin-bottom: 10px; }
+  .locked .ring::after { inset: 8px; }
+  .locked .ring span { font-size: 18px; }
+  .locked .clock { font-size: clamp(32px, 10vh, 48px); margin: 4px 0; }
+  .locked p { font-size: 14px; }
+  .hero { padding: 16px 0 12px; }
+  .hero h1 { font-size: clamp(28px, 9vh, 40px); }
+  .hero-page h1 { font-size: 26px; }
+}
+
+/* Wide and tall enough: the scroll becomes a centred 9:16 stage over the blurred backdrop,
+   with arrows beside it. Behind a dvh check because the stage width is computed from it, and
+   a custom property keeps whatever it is given: without dvh the stage would resolve to
+   nothing, so such a browser keeps the full-bleed layout instead. */
+@media (min-width: 600px) and (min-height: 501px) and (min-aspect-ratio: 2/3) {
+  @supports (height: 1dvh) {
+    .scroll-shell { --stage: min(100vw, calc(100dvh * 9 / 16)); }
+    .scroll-top, .slide-media, .slide-shade, .slide-tap { left: calc((100% - var(--stage)) / 2); right: calc((100% - var(--stage)) / 2); }
+    .slide-source { right: calc((100% - var(--stage)) / 2 + 16px); }
+    .slide-body { width: var(--stage); margin: 0 auto; }
+    .stage-nav {
+      display: flex; flex-direction: column; gap: 10px; position: absolute; top: 50%; transform: translateY(-50%); z-index: 6;
+      right: max(12px, calc((100% - var(--stage)) / 2 - 60px));
+    }
+  }
+}

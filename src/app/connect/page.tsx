@@ -16,8 +16,8 @@ export default async function ConnectPage() {
   return (
     <main className="shell">
       <Nav signedIn email={user.email} />
-      <section className="hero" style={{ paddingTop: 16 }}>
-        <h1 style={{ fontSize: 32 }}>Connections</h1>
+      <section className="hero hero-page">
+        <h1>Connections</h1>
         <p>Everything you connect feeds one curated hour. Disconnect any time.</p>
       </section>
       <Suspense>
