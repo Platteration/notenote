@@ -1,4 +1,4 @@
-import { assertPublicHost, BlockedHostError } from "../net-guard";
+import { assertPublicHost, BlockedHostError, privateHostsAllowed } from "../net-guard";
 
 /**
  * How long a single call to a platform may take. Without this a hung platform would hold
@@ -29,14 +29,44 @@ export class ProviderTimeoutError extends Error {
   }
 }
 
+/**
+ * Text from a reply, made safe to quote in an error message — which is to say in a line of the
+ * server's log, since that is where these errors are written out, message first.
+ *
+ * The message quotes what a platform said so that the operator can see what went wrong. The
+ * Bluesky host is the connecting user's own choice, though, so for that platform the reply is
+ * text an account holder wrote. Quoted raw, a newline in it starts a line of the log the server
+ * never wrote, and an escape sequence is acted on by the terminal reading the log (clearing the
+ * screen, retitling the window, writing to the clipboard). So the C0 and C1 control characters,
+ * DEL, and the Unicode line, paragraph and bidirectional controls are written as `\uXXXX`
+ * escapes: every character that was sent can still be read, and none of them does anything.
+ */
+export function printable(text: string): string {
+  return text.replace(
+    /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 export class ProviderHttpError extends Error {
   constructor(
     public readonly provider: string,
     public readonly status: number,
     public readonly body: string,
   ) {
-    super(`${provider} API responded ${status}: ${body.slice(0, 200)}`);
+    super(`${provider} API responded ${status}: ${printable(body.slice(0, 200))}`);
     this.name = "ProviderHttpError";
+  }
+}
+
+/**
+ * A 2xx whose body is not JSON. `JSON.parse`'s own SyntaxError would do, except that V8 quotes
+ * the start of the text in its message, raw — the reply's first line breaks onto the log's next.
+ */
+export class ProviderReplyError extends Error {
+  constructor(provider: string, text: string) {
+    super(`${provider} replied with something that is not JSON: ${printable(text.slice(0, 200))}`);
+    this.name = "ProviderReplyError";
   }
 }
 
@@ -109,7 +139,11 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
     if (!location) {
       const text = await readCapped(provider, res, MAX_RESPONSE_BYTES);
       if (!res.ok) throw new ProviderHttpError(provider, res.status, text);
-      return JSON.parse(text) as T;
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        throw new ProviderReplyError(provider, text);
+      }
     }
 
     if (hop >= MAX_REDIRECTS) throw new Error(`${provider} redirected more than ${MAX_REDIRECTS} times`);
@@ -117,7 +151,8 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
     try {
       next = new URL(location, target);
     } catch {
-      throw new BlockedHostError(location, "the redirect target is not an address");
+      // A header value can carry bytes 0x80-0xFF, which arrive as C1 control characters.
+      throw new BlockedHostError(printable(location), "the redirect target is not an address");
     }
     if (next.protocol !== "https:" && next.protocol !== "http:") {
       throw new BlockedHostError(next.protocol, "only http and https redirects are followed");
@@ -125,6 +160,16 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
     // The whole point of the guard is that the destination is checked, not merely the name
     // that was typed. A redirect is a new destination.
     await assertPublicHost(next.hostname);
+    // The check resolves the name and the connection resolves it again, so a name whose DNS
+    // answer changes in between (rebinding: public for the check, private for the connection)
+    // passes and connects to an address the check never saw. Over https that connection stops
+    // at the certificate, which an internal service cannot present for someone else's name,
+    // before a request is sent. Over plain http nothing is verified and the request goes
+    // through, so a redirect to http is only followed where the operator has turned the guard
+    // off. Every API this app calls, and the Bluesky host a user names, is https to begin with.
+    if (next.protocol === "http:" && !privateHostsAllowed()) {
+      throw new BlockedHostError(next.hostname, "a redirect to plain http is not followed");
+    }
     if (new URL(target).origin !== next.origin) {
       // A bearer token is issued for one origin; a redirect elsewhere must not carry it.
       headers.delete("authorization");

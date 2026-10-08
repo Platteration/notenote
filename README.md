@@ -120,11 +120,20 @@ of whatever answered, through the error message the Connections page renders. Re
 read through a counting stream and refused past 512 KB, since a destination the user chose can
 otherwise stream for the whole deadline.
 
-Two limits worth stating. The check resolves the name and then fetches it, so a host answering
-publicly one moment and privately the next (DNS rebinding) is not covered; closing that needs
-the resolved address pinned into the connection itself. And `ALLOW_PRIVATE_PROVIDER_HOSTS=1`
-turns the guard off for operators deliberately running a PDS on their own network — off by
-default, because the safe choice shouldn't require reading the documentation.
+Two limits worth stating. The check resolves the name and the connection then resolves it
+again, so a host answering publicly to the first and privately to the second (DNS rebinding)
+passes the check. What keeps that from reaching anything is TLS: the host a user names must be
+https, and while the guard is on a redirect is only followed to https, so the connection has to
+present a certificate for the name that was checked, which an internal service cannot do, and
+it fails before a request is sent. A redirect to plain http used to be followed, and a
+rebinding name behind one put a GET of the host's choosing on an internal service, whose
+status then came back in the feed's `sources` as that platform's failure ("http 404"); it is
+now refused (`test/rebinding.test.ts` stages exactly that). What remains
+is the attempt itself: a connection and a TLS greeting to an address and port the host picks,
+reported only as "unavailable" or "timed out". Closing that too needs the resolved address
+pinned into the connection itself. And `ALLOW_PRIVATE_PROVIDER_HOSTS=1` turns the guard off,
+plain-http redirects included, for operators deliberately running a PDS on their own network —
+off by default, because the safe choice shouldn't require reading the documentation.
 
 ## When a platform misbehaves
 
@@ -224,7 +233,9 @@ In the archive each clip can carry a **note** (up to 2,000 characters) and be fi
 **collections** (up to 50, names up to 60 characters and unique per account whatever their
 case). **Search** looks at the title, the creator and their handle, your note and the names of
 the collections a clip is in, optionally within one collection. It folds case for ASCII letters
-only (SQLite's `LIKE`) and shows the newest 200 matches. The archive holds up to 5,000 clips.
+only (SQLite's `lower()`, matched with `instr` rather than `LIKE`, whose cost on a crafted note
+and query was the note's length times the query's) and shows the newest 200 matches. The archive
+holds up to 5,000 clips.
 Saving a clip you already kept keeps its note and collections; deleting a collection keeps its
 clips and their notes.
 
@@ -641,7 +652,10 @@ per-address limit *before* it reads the body, so a client already over the limit
 server parse anything; the account-keyed limits necessarily come after, since the account is in
 the body. Email is capped
 at 254 characters and a password at 256 wherever one is *written* — signing up, and the new
-password in a change — because beyond that is not a passphrase, it is an upload. Verifying a
+password in a change — because beyond that is not a passphrase, it is an upload. At sign-up the
+length is decided before the address pattern runs, and an address past it is never matched:
+the pattern backtracks quadratically over a run of dots, and one 64 KB sign-up used to hold the
+server's only thread for seven seconds, `/api/health` included. Verifying a
 credential applies no ceiling: sign-up had no maximum until recently, so a longer one can
 already be stored, and refusing it at sign-in or when proving a current password would shut
 such an account for good — there is no password reset anywhere in this app.
@@ -655,7 +669,12 @@ work and the rest wait on it.
 Errors say as little as they can. Only a `UserFacingError` (`src/lib/errors.ts`) has its message
 returned; everything else — a SQLite constraint, a JSON parse failure, a decrypt that could not
 authenticate its data, a platform HTTP error carrying part of an upstream body — is logged and
-answered with a plain 500. A platform that fails is recorded against the feed as a short
+answered with a plain 500. What is logged is text: where an error quotes a platform's reply (an
+HTTP error's body, a reply that is not JSON, a redirect address that does not parse), its
+control characters are written as escapes (`printable` in `src/lib/providers/http.ts`). For
+Bluesky the host, and so the reply, is the user's choice, and a newline in it used to start a
+line of the operator's log that the server never wrote, an escape sequence to reach the
+terminal reading it. A platform that fails is recorded against the feed as a short
 classified reason ("timed out", "rate limited", "needs reconnecting") rather than its message,
 because that string is frozen into the feed row, returned by `/api/feed` and re-served by the
 account export. Connecting a platform with an app password is the one place that says more: a

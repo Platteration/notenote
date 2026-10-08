@@ -140,21 +140,25 @@ export function removeFromCollection(userId: string, collectionId: string, itemK
   return saved;
 }
 
-/** `%`, `_` and the escape character itself, made literal for LIKE ... ESCAPE '\'. */
-function likePattern(q: string): string {
-  return `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-}
-
 /**
  * Search the archive: title, creator, handle, the user's note and the names of the collections
  * a clip is filed in, optionally within one collection and one platform. Newest saves first,
  * at most ARCHIVE_SEARCH_LIMIT of them.
  *
  * Only named fields are matched, never the stored JSON as a whole (demo posters are SVG data
- * URIs, which would match nearly anything). SQLite's LIKE folds case for ASCII letters only.
+ * URIs, which would match nearly anything). A field matches when it contains the query, with
+ * case folded for ASCII letters only: SQLite's lower() folds nothing else, as its LIKE does not.
  * A row whose stored copy is not valid JSON is skipped, because json_extract on it would fail
  * the whole query. If archives outgrow this, FTS5 is the upgrade path where the deployed
  * node:sqlite build includes it (Node 22.22 with SQLite 3.51 did when this was written).
+ *
+ * `instr`, not `LIKE '%q%'`. Notes and the query are both the user's own text, and LIKE's `%`
+ * walks the pattern from every position of the field again: a query that agrees with a note
+ * until its last character costs the note's length times the query's, for every clip. One search
+ * of a full archive of such notes held the server's only thread for three seconds (node:sqlite
+ * is synchronous), and a search can be sent as often as anyone likes. instr compares with
+ * memcmp at each position instead: a fifth of a second for the same archive. It has no
+ * wildcards either, so `%` and `_` are the characters they are with nothing to escape.
  */
 export function searchSaved(userId: string, query: ArchiveQuery): SavedItem[] {
   const q = (query.q ?? "").trim();
@@ -166,14 +170,13 @@ export function searchSaved(userId: string, query: ArchiveQuery): SavedItem[] {
   const where = ["s.user_id = ?", "json_valid(s.item_json)"];
   const args: Array<string | number> = [userId];
   if (q) {
-    const pattern = likePattern(q);
-    where.push(`(json_extract(s.item_json, '$.title') LIKE ? ESCAPE '\\'
-      OR json_extract(s.item_json, '$.creator') LIKE ? ESCAPE '\\'
-      OR json_extract(s.item_json, '$.creatorHandle') LIKE ? ESCAPE '\\'
-      OR s.note LIKE ? ESCAPE '\\'
+    where.push(`(instr(lower(json_extract(s.item_json, '$.title')), lower(?)) > 0
+      OR instr(lower(json_extract(s.item_json, '$.creator')), lower(?)) > 0
+      OR instr(lower(json_extract(s.item_json, '$.creatorHandle')), lower(?)) > 0
+      OR instr(lower(s.note), lower(?)) > 0
       OR s.item_key IN (SELECT ci.item_key FROM collection_items ci JOIN collections c ON c.id = ci.collection_id
-                        WHERE ci.user_id = ? AND c.name LIKE ? ESCAPE '\\'))`);
-    args.push(pattern, pattern, pattern, pattern, userId, pattern);
+                        WHERE ci.user_id = ? AND instr(lower(c.name), lower(?)) > 0))`);
+    args.push(q, q, q, q, userId, q);
   }
   if (provider) {
     where.push("json_extract(s.item_json, '$.provider') = ?");

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { format } from "node:util";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-credential-connect-tests";
@@ -97,6 +98,17 @@ describe("everything else on that path", () => {
     expect(answer.message).not.toMatch(/bsky-security\.example|Reset it at|AuthFactorTokenRequired/);
     // The operator still sees what the host actually said.
     expect(answer.log).toBe(true);
+  });
+
+  it("hands the operator's log what a 200 reply said as text, not as lines or terminal commands", async () => {
+    // The route logs this error with console.error, and the `error` field is the host's own
+    // words. A newline in it used to start a log line the server never wrote, and an escape
+    // sequence to reach the operator's terminal as one.
+    pdsAnswers(200, JSON.stringify({ error: "Nope\n[connect:tiktok] forged by the PDS\u001b]0;pwned\u0007" }));
+    const line = format("Credential connect failed for bluesky:", await wrongPassword());
+    expect(line).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(line.split("\n").some((l) => l.startsWith("[connect:tiktok]"))).toBe(false);
+    expect(line).toContain("[connect:tiktok] forged by the PDS");
   });
 
   it("treats a 200 with no session in it as a refusal rather than a connection", async () => {

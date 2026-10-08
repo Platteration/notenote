@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import http from "node:http";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
+import { format } from "node:util";
 
 const { BlockedHostError } = await import("@/lib/net-guard");
-const { MAX_RESPONSE_BYTES, ProviderResponseTooLargeError, getJson, parseIsoDuration } = await import("@/lib/providers/http");
+const { MAX_RESPONSE_BYTES, ProviderReplyError, ProviderResponseTooLargeError, getJson, parseIsoDuration } = await import(
+  "@/lib/providers/http"
+);
 
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse) => void;
 
@@ -161,6 +165,77 @@ describe("response size", () => {
     });
     expect(MAX_RESPONSE_BYTES).toBeGreaterThan(filler.length);
     await expect(getJson("Test", `${server.origin}/ok`)).resolves.toEqual({ filler });
+  });
+});
+
+// What a platform says is quoted in the error, and the error is written to the server's log by
+// the code that catches it (`console.error(..., err)` in connections.ts, the credentials route
+// and the OAuth callback). The Bluesky host is the connecting user's choice, so those bytes are
+// an account holder's. `format` is what console.error writes for the same arguments.
+describe("what a platform says reaches the log as text, never as control characters", () => {
+  /** A forged log line, a screen clear, a window title, and words the operator should still see. */
+  const FORGED = "nope\n[connect:tiktok] forged by the PDS\u001b[2J\u001b]0;pwned\u0007 café";
+  /** Anything that acts on a terminal or a line-oriented log; the stack trace's own newlines aside. */
+  const ACTIVE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e]/;
+
+  function logged(err: unknown): string {
+    return format("Fetching items from bluesky failed:", err);
+  }
+
+  function expectQuotedNotActive(line: string): void {
+    expect(line).not.toMatch(ACTIVE);
+    // No line of the log is one the PDS wrote...
+    expect(line.split("\n").some((l) => l.startsWith("[connect:tiktok]"))).toBe(false);
+    // ...and the operator still reads what it said, ordinary letters untouched.
+    expect(line).toContain("[connect:tiktok] forged by the PDS");
+    expect(line).toContain("café");
+  }
+
+  it("in a refusal's body", async () => {
+    const pds = await serve((_req, res) => {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(FORGED);
+    });
+    const err = await getJson("Bluesky", `${pds.origin}/xrpc/x`).catch((e: unknown) => e);
+    expectQuotedNotActive(logged(err));
+  });
+
+  it("in a 200 whose body is not JSON", async () => {
+    const pds = await serve((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(FORGED);
+    });
+    const err = await getJson("Bluesky", `${pds.origin}/xrpc/x`).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderReplyError);
+    expectQuotedNotActive(logged(err));
+  });
+
+  it("in a redirect address the URL parser cannot read", async () => {
+    // Header values cannot carry C0 controls (the client refuses the reply), but bytes 0x80-0xFF
+    // pass and arrive as C1 controls: 0x9B is CSI, 0x85 is NEL. Node's own server will not send
+    // them, so this one is a raw socket.
+    const raw = net.createServer((socket) => {
+      socket.once("data", () => {
+        socket.end(
+          Buffer.concat([
+            Buffer.from("HTTP/1.1 302 Found\r\nLocation: http://["),
+            Buffer.from([0x9b, 0x32, 0x4a, 0x85]),
+            Buffer.from("FORGED\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+          ]),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => raw.listen(0, "127.0.0.1", resolve));
+    const { port } = raw.address() as AddressInfo;
+    try {
+      const err = await getJson("Bluesky", `http://127.0.0.1:${port}/xrpc/x`).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BlockedHostError);
+      const line = logged(err);
+      expect(line).not.toMatch(ACTIVE);
+      expect(line).toContain("FORGED");
+    } finally {
+      raw.close();
+    }
   });
 });
 

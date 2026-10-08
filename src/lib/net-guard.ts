@@ -8,9 +8,12 @@
  * https service with a trusted certificate would have part of its response handed back in the
  * error message.
  *
- * Note the residual risk: this resolves the name and then fetches it, so a host that answers
- * with a public address here and a private one microseconds later (DNS rebinding) is not
- * covered. Closing that needs the resolved address pinned into the connection itself.
+ * Note the residual risk: this resolves the name and the connection resolves it again, so a
+ * host that answers with a public address here and a private one microseconds later (DNS
+ * rebinding) passes. TLS is what stops it reaching anything: every destination this guards is
+ * https (getJson refuses a redirect to plain http while the guard is on), and the connection
+ * fails on the certificate before a request is sent. The connection attempt itself is not
+ * stopped; closing that needs the resolved address pinned into the connection itself.
  */
 import { lookup } from "node:dns/promises";
 import net from "node:net";

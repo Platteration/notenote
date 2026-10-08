@@ -33,7 +33,11 @@ export async function signUp(input: {
 }): Promise<UserRow> {
   const email = input.email.trim().toLowerCase();
   const displayName = input.displayName.trim();
-  if (!EMAIL_RE.test(email) || email.length > MAX_EMAIL_LENGTH) throw new UserFacingError("Enter a valid email address");
+  // The length is decided first and an address past it is never matched: EMAIL_RE backtracks
+  // quadratically over a run of dots (`a@` and 60,000 of them took eight seconds), this route is
+  // unauthenticated with a body of up to 64 KB, and those seconds are the only thread the server
+  // has. At MAX_EMAIL_LENGTH the worst case is a fraction of a millisecond.
+  if (email.length > MAX_EMAIL_LENGTH || !EMAIL_RE.test(email)) throw new UserFacingError("Enter a valid email address");
   if (displayName.length < 1 || displayName.length > 60) throw new UserFacingError("Pick a display name (1-60 characters)");
   if (input.password.length < MIN_PASSWORD_LENGTH) {
     throw new UserFacingError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);

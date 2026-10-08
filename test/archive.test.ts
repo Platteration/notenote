@@ -255,6 +255,32 @@ describe("search", () => {
     expect(() => archive.searchSaved(userId, { collectionId: "nope" })).toThrow(/No such collection/);
   });
 
+  it("costs about one pass over the archive, whatever the query", () => {
+    // Notes and the query are both the user's own text. Matched as `LIKE '%q%'`, a query that
+    // agrees with a note at every position until its last character costs the note's length times
+    // the query's for every clip, on the server's only thread: one search of a full archive of
+    // such notes held it for three seconds, and nothing limits how often a search is sent.
+    const insert = getDb().prepare("INSERT INTO saved_items (user_id, item_key, item_json, saved_at, note) VALUES (?, ?, ?, ?, ?)");
+    const note = "a".repeat(limits.MAX_NOTE_LENGTH);
+    getDb().exec("BEGIN");
+    for (let i = 0; i < limits.MAX_SAVED_ITEMS; i++) {
+      insert.run(userId, `youtube:slow${i}`, JSON.stringify(clip({ externalId: `slow${i}` })), NOW + i, note);
+    }
+    getDb().exec("COMMIT");
+    const timed = (q: string) => {
+      const started = performance.now();
+      expect(archive.searchSaved(userId, { q })).toEqual([]);
+      return performance.now() - started;
+    };
+    timed("zebra"); // warm
+    // Measured against an ordinary query over the same archive, so the machine's speed cancels
+    // out: a few times as long here (three to six), against two hundred to three hundred times
+    // as long, two to three seconds, as LIKE.
+    const ordinary = timed("zebra crossing");
+    const hostile = timed(`${"a".repeat(limits.MAX_SEARCH_QUERY - 1)}b`);
+    expect(hostile).toBeLessThan(ordinary * 20);
+  });
+
   it("returns at most the search limit, newest first", () => {
     const insert = getDb().prepare("INSERT INTO saved_items (user_id, item_key, item_json, saved_at) VALUES (?, ?, ?, ?)");
     for (let i = 0; i < limits.ARCHIVE_SEARCH_LIMIT + 1; i++) insert.run(userId, `youtube:many${i}`, JSON.stringify(clip({ externalId: `many${i}`, title: "Many" })), NOW + i);

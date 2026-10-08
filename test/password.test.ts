@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-password-tests";
@@ -201,5 +201,42 @@ describe("an account whose credentials predate the length ceilings", () => {
     await expect(changePassword(id, "password123", LONG_PASSWORD, null)).rejects.toThrow(
       new RegExp(`at most ${MAX_PASSWORD_LENGTH}`),
     );
+  });
+});
+
+/**
+ * Sign-up is unauthenticated and its body may run to MAX_REQUEST_BYTES (64 KB), and the address
+ * pattern backtracks quadratically over a long run of dots: `a@` and 60,000 of them took eight
+ * seconds of the only thread this server has, during which nobody else was answered. Nothing
+ * ahead of signUp holds such a request back — the deployment-wide ceiling refunds a sign-up that
+ * made no account — so the length has to be decided first, and an address past it is never
+ * matched at all.
+ */
+describe("a sign-up address past the ceiling", () => {
+  const HOSTILE = `a@${".".repeat(60_000)}@`;
+
+  it("is refused without running the address pattern over it", async () => {
+    const test = vi.spyOn(RegExp.prototype, "test");
+    const started = performance.now();
+    try {
+      await expect(signUp({ email: HOSTILE, displayName: "Slow", password: "password123" })).rejects.toThrow(
+        /valid email/,
+      );
+      expect(test.mock.calls.some(([input]) => typeof input === "string" && input.length > MAX_EMAIL_LENGTH)).toBe(false);
+    } finally {
+      test.mockRestore();
+    }
+    // The harm itself, with three orders of magnitude to spare either side: refused in
+    // microseconds now, seconds before.
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("is still matched, and refused, when it fits", async () => {
+    const dots = `a@${".".repeat(MAX_EMAIL_LENGTH - 3)}@`;
+    expect(dots.length).toBe(MAX_EMAIL_LENGTH);
+    await expect(signUp({ email: dots, displayName: "Dots", password: "password123" })).rejects.toThrow(/valid email/);
+    await expect(
+      signUp({ email: `${"d".repeat(MAX_EMAIL_LENGTH - "@example.com".length)}@example.com`, displayName: "Fits", password: "password123" }),
+    ).resolves.toBeTruthy();
   });
 });
