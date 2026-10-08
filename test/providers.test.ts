@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { enabledProviderIds, getProvider, PROVIDERS } from "@/lib/providers";
@@ -7,6 +7,16 @@ import { demoItems } from "@/lib/providers/demo";
 import { detectPlatform, nativeUrl, PROVIDER_META, providerMeta, providerName } from "@/lib/providers/meta";
 import { PROVIDER_IDS } from "@/lib/providers/types";
 import { connectErrorText } from "@/components/ConnectionsPanel";
+
+// Nothing in this file needs a resolver, so none is reachable: a lookup that ran ahead of a
+// check the app can make on its own would otherwise pass wherever DNS answers and fail where
+// it does not. The stub records every call and refuses it, as an unresolvable name would.
+const lookup = vi.hoisted(() =>
+  vi.fn(async (host: string) => {
+    throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: "ENOTFOUND" });
+  }),
+);
+vi.mock("node:dns/promises", () => ({ lookup, default: { lookup } }));
 
 describe("provider registry", () => {
   it("registers every platform with metadata, a logo and a demo catalogue", () => {
@@ -39,6 +49,9 @@ describe("provider registry", () => {
     expect(serviceFromScope("service=https://pds.example.org")).toBe("https://pds.example.org");
     expect(serviceFromScope(null)).toBe("https://bsky.social");
     await expect(PROVIDERS.bluesky.credentialConnect!.authenticate({ identifier: "", password: "" })).rejects.toThrow(/required/);
+    // Refused before the service host is resolved: a form missing its handle or password costs
+    // no lookup, and the answer does not depend on whether a resolver is reachable.
+    expect(lookup).not.toHaveBeenCalled();
   });
 });
 

@@ -98,10 +98,13 @@ export const bluesky: SocialProvider = {
       { name: "service", label: "Service host", type: "url", placeholder: DEFAULT_SERVICE, help: "Leave blank unless you self-host your PDS." },
     ],
     async authenticate(input) {
-      const service = await checkedService(input.service);
+      // What can be refused without the network is refused first: a form with no handle or
+      // password is answered before the service host is resolved, so it costs no DNS lookup
+      // and reads the same whether or not the resolver is reachable.
       const identifier = (input.identifier ?? "").trim().replace(/^@/, "");
       const password = input.password ?? "";
       if (!identifier || !password) throw new UserFacingError("Handle and app password are required");
+      const service = await checkedService(input.service);
       const session = await getJson<Session>("bluesky", `${service}/xrpc/com.atproto.server.createSession`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
