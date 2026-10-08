@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The end-to-end run, self-contained: build the app, serve it on a database of its own, walk
-# scripts/smoke.sh against it, and stop it again. `npm run test:e2e` is the whole thing, and
-# CI runs exactly this rather than a copy of the steps.
+# scripts/smoke.sh (the API, over HTTP) and then scripts/browser-walk.mjs (the pages, in
+# Chromium, under the headers the server really sends) against it, and stop it again.
+# `npm run test:e2e` is the whole thing, and CI runs exactly this rather than a copy of the
+# steps. The browser walk needs Playwright's Chromium: `npx playwright install chromium` once.
 #
 # The server is stopped by the PID recorded when it was started. Stopping it by name is how a
 # run loses one: `pkill -f 'next start'` matches the shell running this script as well.
@@ -56,3 +58,4 @@ done
 [ -n "$ready" ] || { echo "the server did not answer /api/health within 60 seconds" >&2; exit 1; }
 
 BASE="http://localhost:$PORT" bash scripts/smoke.sh
+BASE="http://localhost:$PORT" node scripts/browser-walk.mjs

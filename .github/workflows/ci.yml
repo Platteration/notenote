@@ -52,12 +52,16 @@ jobs:
           # The build renders pages that read settings, so it needs a session secret.
           SESSION_SECRET: ci-build-secret-not-a-real-deployment-key
 
-      # Boots the built app and walks the core flow with scripts/smoke.sh: the one check that
-      # runs against a real server rather than a module under test. `npm run test:e2e` builds,
-      # starts on a free port with a scratch DATA_DIR and its own session secret, polls
-      # /api/health, walks and stops the server by its recorded PID, printing the server log on
-      # failure, so this step and a developer run the same thing. It builds again; the Build
-      # step above is kept because it names a build failure as its own.
+      # The browser the end-to-end walk drives, at the build the lockfile's Playwright expects.
+      - run: npx playwright install --with-deps chromium
+
+      # Boots the built app and walks the core flow with scripts/smoke.sh over HTTP and then
+      # with scripts/browser-walk.mjs in Chromium under the headers the server really sends: the
+      # checks that run against a real server rather than a module under test. `npm run
+      # test:e2e` builds, starts on a free port with a scratch DATA_DIR and its own session
+      # secret, polls /api/health, walks and stops the server by its recorded PID, printing the
+      # server log on failure, so this step and a developer run the same thing. It builds again;
+      # the Build step above is kept because it names a build failure as its own.
       - run: npm run test:e2e
 
   # Its own job, so that an advisory published against an unchanged tree turns audit red

@@ -19,7 +19,13 @@ guarantee. Reports are read and acted on in order of severity.
 
 In scope: the code in this repository, including anything it does with input
 that comes from outside it (files, share links, imported data, network
-responses, user-supplied text rendered into a page).
+responses, user-supplied text rendered into a page), and the website it
+serves: the response headers and content security policy on every response
+(`src/lib/security-headers.ts`, written out in the README), and the files it
+serves beside its pages.
+
+`/.well-known/security.txt` on a running instance points here. Its `Expires`
+date is renewed before it lapses; `test/site-files.test.ts` fails once it has.
 
 Out of scope: vulnerabilities in third-party dependencies that are already
 public and have an upstream fix, findings that require an attacker to already

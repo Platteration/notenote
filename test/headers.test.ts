@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { afterEach, assert, describe, expect, it } from "vitest";
+import { NextRequest } from "next/server";
 
 const { default: nextConfig } = await import("../next.config");
-const { contentSecurityPolicy, securityHeaders } = await import("@/lib/security-headers");
+const { contentSecurityPolicy, PERMISSIONS_POLICY, securityHeaders } = await import("@/lib/security-headers");
 const { MAX_REQUEST_BYTES } = await import("@/lib/api");
 const proxyModule = await import("@/proxy");
 
@@ -19,8 +21,15 @@ const headerMap = (env: Record<string, string | undefined>) =>
   Object.fromEntries(securityHeaders(env).map((h) => [h.key, h.value]));
 
 /** What the proxy would put on a response right now, given the process environment. */
-function served(): Headers {
-  return proxyModule.proxy().headers;
+function served(headers?: Record<string, string>): Headers {
+  return proxyModule.proxy(new NextRequest("http://localhost/", { headers })).headers;
+}
+
+/** The nonce a policy carries. */
+function nonceOf(csp: string | null): string {
+  const match = /'nonce-([^']+)'/.exec(csp ?? "");
+  if (!match?.[1]) throw new Error(`no nonce in ${csp}`);
+  return match[1];
 }
 
 afterEach(() => {
@@ -47,16 +56,43 @@ describe("security headers", () => {
     expect(nextConfig.poweredByHeader).toBe(false);
   });
 
-  it("allows platform thumbnails and video but keeps everything else on this origin", () => {
+  it("allows platform thumbnails and video and refuses everything it does not name", () => {
     const csp = directives(contentSecurityPolicy({ NODE_ENV: "production" }));
-    expect(csp["default-src"]).toEqual(["'self'"]);
+    expect(csp["default-src"]).toEqual(["'none'"]);
     expect(csp["img-src"]).toContain("https:"); // arbitrary platform CDNs
     expect(csp["img-src"]).toContain("data:"); // demo thumbnails are inline SVG
     expect(csp["media-src"]).toContain("https:");
     expect(csp["connect-src"]).toEqual(["'self'"]);
     expect(csp["object-src"]).toEqual(["'none'"]);
-    expect(csp["base-uri"]).toEqual(["'self'"]);
-    expect(csp["form-action"]).toEqual(["'self'"]);
+    // No page sets a <base>, and every form is sent by its script.
+    expect(csp["base-uri"]).toEqual(["'none'"]);
+    expect(csp["form-action"]).toEqual(["'none'"]);
+  });
+
+  it("runs an inline script only when it carries this response's nonce", () => {
+    const csp = directives(contentSecurityPolicy({ NODE_ENV: "production" }, "n0nce"));
+    expect(csp["script-src"]).toEqual(["'self'", "'nonce-n0nce'"]);
+    // Styles: the stylesheet, and style attributes; an injected <style> element is refused.
+    expect(csp["style-src"]).toEqual(["'self'"]);
+    expect(csp["style-src-attr"]).toEqual(["'unsafe-inline'"]);
+    expect(contentSecurityPolicy({ NODE_ENV: "production" }, "n0nce")).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+  });
+
+  it("asks for https upgrades only where the deployment answers on https", () => {
+    // Measured: over plain http on a LAN address the upgrade sent every script, stylesheet and
+    // font to https on the same port, where nothing answered.
+    expect(directives(contentSecurityPolicy({ NODE_ENV: "production", APP_BASE_URL: "https://scroll.example" }))).toHaveProperty("upgrade-insecure-requests");
+    expect(directives(contentSecurityPolicy({ NODE_ENV: "production", APP_BASE_URL: "http://192.168.1.5:3000" }))).not.toHaveProperty("upgrade-insecure-requests");
+    expect(directives(contentSecurityPolicy({ NODE_ENV: "production" }))).not.toHaveProperty("upgrade-insecure-requests");
+  });
+
+  it("denies every powerful feature but autoplay, each named once", () => {
+    const entries = PERMISSIONS_POLICY.split(", ");
+    const features = entries.map((e) => e.split("=")[0]);
+    expect(new Set(features).size).toBe(features.length);
+    expect(entries.filter((e) => !e.endsWith("=()"))).toEqual(["autoplay=(self)"]);
+    for (const feature of ["camera", "microphone", "geolocation", "payment", "usb"]) expect(entries).toContain(`${feature}=()`);
+    expect(headerMap({ NODE_ENV: "production" })["Permissions-Policy"]).toBe(PERMISSIONS_POLICY);
   });
 
   it("keeps eval and the dev socket out of a built server", () => {
@@ -107,7 +143,33 @@ describe("where the headers are decided", () => {
     expect(headers.get("x-frame-options")).toBe("DENY");
     expect(headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
     expect(headers.get("cross-origin-opener-policy")).toBe("same-origin");
+    expect(headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(headers.get("permissions-policy")).toContain("camera=()");
+  });
+
+  it("mints a fresh, unguessable nonce for every response", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const nonce = nonceOf(served().get("content-security-policy"));
+      // Sixteen random bytes, base64.
+      expect(nonce).toMatch(/^[A-Za-z0-9+/]{22}==$/);
+      seen.add(nonce);
+    }
+    expect(seen.size).toBe(50);
+  });
+
+  it("hands the renderer the same policy the browser gets, so the page's scripts carry its nonce", () => {
+    // The framework reads the nonce out of the request's Content-Security-Policy header while it
+    // renders; NextResponse.next() forwards an overridden request header under this name.
+    const headers = served();
+    expect(headers.get("x-middleware-request-content-security-policy")).toBe(headers.get("content-security-policy"));
+    expect(headers.get("x-middleware-override-headers")?.split(",")).toContain("content-security-policy");
+  });
+
+  it("overwrites a policy the client sent, so the nonce in the page is never the client's choice", () => {
+    const headers = served({ "content-security-policy": "script-src 'nonce-chosen-by-the-client'" });
+    expect(headers.get("x-middleware-request-content-security-policy")).toBe(headers.get("content-security-policy"));
+    expect(nonceOf(headers.get("x-middleware-request-content-security-policy"))).not.toMatch(/chosen/);
   });
 
   it("reads APP_BASE_URL per request, so HSTS follows the running server and not the build", () => {
@@ -166,5 +228,27 @@ describe("the body the framework buffers before any handler runs", () => {
     const buffered = sizeInBytes(configured);
     expect(buffered).toBeGreaterThan(MAX_REQUEST_BYTES);
     expect(buffered).toBeLessThanOrEqual(MAX_REQUEST_BYTES * 4);
+  });
+});
+
+/**
+ * The README writes the headers out in full, and the browser walk (`scripts/browser-walk.mjs`)
+ * holds every live response to that block. This holds the block to the code, so a header
+ * changed in one place and not the other fails here before it ships.
+ */
+describe("the policy is the same everywhere it is written", () => {
+  const readme = readFileSync("README.md", "utf8");
+  const block = /<!-- headers:begin -->\s*```text\n([\s\S]*?)```\s*<!-- headers:end -->/.exec(readme)?.[1];
+
+  it("is written out in the README", () => {
+    assert.isDefined(block, "README.md has the headers block");
+  });
+
+  it("is, word for word, what an https deployment sends", () => {
+    const lines = (block ?? "").split("\n").filter((l) => l.trim());
+    const sent = securityHeaders({ NODE_ENV: "production", APP_BASE_URL: "https://scroll.example" }, "{nonce}").map(
+      ({ key, value }) => `${key}: ${value}`,
+    );
+    expect(lines).toEqual(sent);
   });
 });

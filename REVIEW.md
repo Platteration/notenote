@@ -20,6 +20,8 @@ An independent reviewer then read each commit and tried to find what was wrong w
 
 Repository hardening applied here as well: every GitHub Action is pinned to a commit rather than a floating tag, each workflow declares a least-privilege `permissions` block, and a Dependabot config, a licence and a security policy are in place.
 
+**Website layer** (2026-10-08): the policy SEC-7 recommended is tightened to what the app was measured to load in a browser: `default-src 'none'`, scripts by a per-request nonce instead of `'unsafe-inline'`, `form-action` and `base-uri` `'none'`, a full `Permissions-Policy`, and `Cross-Origin-Resource-Policy`, held to the README by a unit test and to every live response by a Chromium walk in `npm run test:e2e`. The README's "The website: headers and hosting" section has the reasoning.
+
 The rest of this document is the review as written. Fixed items are left in place so the reasoning behind each change stays with it.
 
 ## Summary

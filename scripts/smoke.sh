@@ -171,6 +171,20 @@ case "$BASE" in
   *) [ -z "$hsts" ] || fail "HSTS was announced over plain http (a build-time value, or APP_BASE_URL disagrees with $BASE)" ;;
 esac
 
+echo "-> the repository's own files are not part of the site"
+# The server answers its routes and public/, nothing else: not the sources, the configuration,
+# the git metadata or the build's internals, and not by a path that climbs out of public/ or
+# /_next/static either (--path-as-is sends the dots and their encodings as written).
+for path in /README.md /package.json /.env.example /.git/config /next.config.ts /src/proxy.ts \
+  /scripts/e2e.sh /public/guard.js /_next/BUILD_ID /%2e%2e/package.json \
+  /_next/static/..%2f..%2f..%2fpackage.json /_next/static/%2e%2e/%2e%2e/%2e%2e/package.json \
+  /icons/..%2f..%2fpackage.json /.well-known/..%2f..%2fpackage.json; do
+  code="$(curl -sS --path-as-is -o /tmp/smoke-file -w '%{http_code}' "$BASE$path")"
+  [ "$code" = "404" ] || fail "$path answered $code"
+  ! grep -qE '"name": "daily-scroll"|repositoryformatversion|SESSION_SECRET=|export function proxy|NextConfig' /tmp/smoke-file \
+    || fail "$path served a file from the repository"
+done
+
 echo "-> an oversized body is refused rather than buffered"
 big="$(printf '%070000d' 0 | tr '0' 'x')"
 code="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$BASE/api/auth/login" \

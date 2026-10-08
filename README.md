@@ -370,8 +370,8 @@ npm run typecheck   # next typegen, then tsc --noEmit
 npm test            # vitest
 npm run test:conventions   # the shared repository conventions (CONVENTIONS.md)
 npm run check       # lint + typecheck + test + conventions: the gate before a push
-npm run test:e2e    # build, serve and walk the core flow end to end (scripts/smoke.sh)
-npm run test:all    # the unit suite, then the end-to-end walk
+npm run test:e2e    # build, serve, walk the core flow over HTTP (scripts/smoke.sh), then in Chromium (scripts/browser-walk.mjs)
+npm run test:all    # the unit suite, then the end-to-end walks
 npm run smoke       # the longer portable walk (scripts/smoke.mjs) against a running server
 ```
 
@@ -382,7 +382,9 @@ note, a collection renamed and deleted, filing, search, and a removal that is re
 until it is confirmed), the hour locks again once it has
 passed, and sign-in throttling engages. It also checks the security headers on a real response,
 including that HSTS agrees with the scheme `BASE` was reached on — so point `BASE` at the
-address the server itself is configured with. Start the app, then `bash scripts/smoke.sh`. The
+address the server itself is configured with — and that none of the repository's own files
+(sources, configuration, `.git`, the build's internals) is served, by name or by a path that
+climbs out of `public/` or `/_next/static`. Start the app, then `bash scripts/smoke.sh`. The
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
@@ -401,13 +403,28 @@ or multi-instance hosting needs a different persistence/session architecture. Se
 to your public HTTPS origin before registering OAuth callbacks. Back up both the database and
 the encryption secret. The setup command deliberately never replaces an existing `.env`.
 
-`npm run test:e2e` is that walk with nothing to set up: it builds, starts the app on a free port
-with a database of its own, waits for `/api/health`, runs `scripts/smoke.sh` against it and stops
-the server by the PID it recorded, printing the server log if anything failed. Run
-`bash scripts/smoke.sh` directly when you already have a server up and want to walk that one.
+`scripts/browser-walk.mjs` walks the pages in Chromium (Playwright, a development dependency)
+under the headers the server really sends: it signs up through the form, connects two demo
+platforms, opens the hour from Settings, scrolls, asks why a clip was chosen, saves it, files it
+in a new collection, changes the theme and accent, registers the notification worker, signs out
+and visits an address that does not exist, reaching each page by the app's own links. It fails
+on any Content-Security-Policy violation (the page's `securitypolicyviolation` events and the
+browser's console reports alike), any uncaught exception or console error, any request that
+leaves the origin, any response without the headers or with a policy other than the README's
+block, a nonce used twice, a permission the page still has or a feature name Chromium does not
+know, and caching other than what the website section below describes. Then, in fresh browsers:
+without JavaScript the page must say it needs it and a form pressed must be refused, keeping what
+was typed, and a page whose scripts are made to fail or to throw — after the safety net is
+listening, and before it has arrived — must show the safety net's note.
+
+`npm run test:e2e` runs both walks with nothing to set up: it builds, starts the app on a free
+port with a database of its own, waits for `/api/health`, runs `scripts/smoke.sh` and then
+`scripts/browser-walk.mjs` against it, and stops the server by the PID it recorded, printing the
+server log if anything failed. Run either script directly, with `BASE` set, when you already
+have a server up and want to walk that one.
 
 One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
-conventions, build and then `npm run test:e2e`, each as its own step) and an `audit` job, which
+conventions, build, the Chromium install and then `npm run test:e2e`, each as its own step) and an `audit` job, which
 runs `npm audit --omit=dev --audit-level=high` against the lockfile.
 
 Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
@@ -428,25 +445,94 @@ AES key protecting the access and refresh tokens of every connected platform. `n
 register OAuth redirect URIs, which is a normal step and holds real tokens. Production refuses
 to boot; everywhere else prints a warning on every start.
 
-Responses carry a content security policy, `X-Content-Type-Options: nosniff`, a referrer policy
-and `frame-ancestors 'none'` (with `X-Frame-Options` alongside it), and `X-Powered-By` is off
-(`poweredByHeader: false` in `next.config.ts`). Framing is the one that earns its place today:
-Settings has single-click buttons for signing other devices out and disconnecting platforms.
-The policy is otherwise defence in depth — there is no `dangerouslySetInnerHTML` or `innerHTML`
-anywhere in the app — and it is deliberately loose in two places: `'unsafe-inline'` for scripts,
-which is what an app without a nonce needs, and any https origin for images and media, because
-thumbnails and video come from whichever CDN a platform uses. HSTS is sent only when
-`APP_BASE_URL` says the deployment answers on https.
+## The website: headers and hosting
 
-The headers are written by `src/proxy.ts` as each response is answered, from the environment
-of the running server — not by `headers()` in `next.config.ts`. A config `headers()` entry is
-evaluated once by `next build` and frozen into `.next/routes-manifest.json`, which the
-production server answers from; building in CI or an image and supplying `APP_BASE_URL` at
-`npm start`, the shape this README and `.env.example` describe, would then have taken the
-build machine's answer — no HSTS for an https deployment, or a year of https-only announced
-over plain http from an image built with an https base URL. The policy itself is in
-`src/lib/security-headers.ts`, and `test/headers.test.ts` checks both what it says and that a
-change to the environment alone changes what is served.
+The app is its own web server, so it is also its own host: every response — pages, API routes,
+the hashed build assets under `/_next/static`, the files in `public/` and the not-found page —
+gets its headers from `src/proxy.ts`, as it is answered. There are no `_headers`, `.htaccess` or
+nginx files, because a static host cannot run the app; whatever terminates HTTPS in front of it
+should pass these headers through and add no policy of its own (two Content-Security-Policy
+headers are both enforced, so the stricter of each pair wins and a looser copy changes nothing,
+while a stricter one breaks what this one was measured to allow). `X-Powered-By` is off
+(`poweredByHeader: false` in `next.config.ts`).
+
+Run it on an origin of its own — a domain or a subdomain, not a path under another site: the
+session cookie is `path=/`, the service worker's scope is `/`, and `'self'` in the policy is the
+whole origin, so anything else served from that origin is inside all three.
+
+What an https deployment sends on every response, `{nonce}` being fresh per response (this block
+is read by the tests, so it is the policy, not a description of it):
+
+<!-- headers:begin -->
+```text
+Content-Security-Policy: default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' https: data:; media-src https:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: accelerometer=(), autoplay=(self), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(), display-capture=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), idle-detection=(), interest-cohort=(), local-fonts=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), window-management=(), xr-spatial-tracking=()
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+```
+<!-- headers:end -->
+
+HSTS and `upgrade-insecure-requests` are sent only when `APP_BASE_URL` says the deployment
+answers on https. Both promise https: a browser ignores HSTS over plain http, and the upgrade,
+measured on a plain-http deployment reached by a LAN address, sent every script, stylesheet and
+font to `https://` on the same port, where nothing answered.
+
+Each source in the policy was measured, not copied: `scripts/browser-walk.mjs` loads every page
+of the built app in Chromium under exactly these headers and fails on any violation.
+
+| Directive | Why |
+| --- | --- |
+| `default-src 'none'` | Nothing is allowed unless it is named below. |
+| `script-src 'self' 'nonce-…'` | The app's own files, and an inline script only when it carries this response's nonce. The framework inlines its bootstrap and each page's data as `<script>` elements; the proxy mints a nonce per request, puts the policy on the request as well as the response, and the framework stamps the nonce on every script it writes. Every page is rendered per request already (the root layout reads the session cookie), which a nonce needs. No `'unsafe-inline'`, and no `'unsafe-eval'` outside `next dev`. |
+| `style-src 'self'` and `style-src-attr 'unsafe-inline'` | The stylesheet, and `style` attributes: React writes `style` props as attributes, and the components use them for values computed per item (a reason bar's width, the countdown ring, a platform's brand colour). An injected `<style>` element, which can select and leak what a page shows, is still refused. The framework's default not-found page styles itself with one, which is why the app has its own (`src/app/not-found.tsx`). |
+| `img-src 'self' https: data:`, `media-src https:` | Thumbnails and videos come from whichever CDN a connected platform uses; demo posters are inline SVG. |
+| `font-src 'self'` | The display face, which `next/font` downloads at build time and serves from `/_next/static/media`. |
+| `connect-src 'self'`, `worker-src 'self'`, `manifest-src 'self'` | The app's own API, the notification service worker and the web manifest. |
+| `base-uri 'none'`, `object-src 'none'` | No page sets a `<base>` or embeds a plugin. |
+| `form-action 'none'` | Every form is sent by its script, so the browser itself never submits one: an injected `<form>` cannot send what is typed into it, or what a password manager fills in, anywhere. A form pressed before the page's scripts have run is refused rather than reloading the page and losing what was typed; the browser walk presses the sign-up form with scripts off and checks exactly that. |
+| `frame-ancestors 'none'` (and `X-Frame-Options: DENY`) | Settings has single-click buttons for signing other devices out and disconnecting platforms, which is exactly what a clickjacking frame wants. |
+
+Not adopted, measured: `require-trusted-types-for 'script'`. The framework's chunk loader
+assigns script URLs to `script.src` as plain strings and its error screen writes CSS through
+`innerHTML`, and neither creates a Trusted Types policy, so under it sign-up never reached the
+Connections page.
+
+`Permissions-Policy` denies every powerful feature the browser offers but `autoplay`, which this
+origin keeps because a clip starts playing as it scrolls into view; vibration, the Web Audio
+chimes and notifications are not features the header governs. The walk reads
+`document.featurePolicy` and fails on a name Chromium does not recognise, since a misspelt
+feature is ignored without a word. `Cross-Origin-Resource-Policy: same-origin` keeps other sites
+from embedding the app's own files; `Cross-Origin-Opener-Policy: same-origin` keeps a window on
+another site that the app opened, or that opened it, from holding a reference to it.
+
+Caching is left to the framework, and the walk pins what it measured: pages and API responses
+are `no-store` (every one is somebody's own), the content-hashed assets under `/_next/static`
+are `public, max-age=31536000, immutable`, and `public/` files and the manifest, whose names
+carry no version, are `max-age=0`, so they are revalidated on every use.
+
+When a page's scripts fail to load, or throw before the app has started, `public/guard.js` (loaded
+from its own file in every page's `<head>`) puts a note at the top of the page
+saying so, with a Reload button, instead of leaving buttons that do nothing; the app tells it
+when it has started (`src/components/Started.tsx`), and a browser without JavaScript gets a
+`<noscript>` note instead. `public/robots.txt` keeps search engines out — every page past the
+sign-in form is somebody's own feed — and `public/.well-known/security.txt` points at
+`SECURITY.md` and GitHub's private vulnerability reporting. Its `Expires` date must be renewed
+before it lapses: `test/site-files.test.ts` fails once it has, or once it is set more than a
+year ahead.
+
+The headers are written by `src/proxy.ts` rather than by `headers()` in `next.config.ts`. A
+config `headers()` entry is evaluated once by `next build` and frozen into
+`.next/routes-manifest.json`, which the production server answers from; building in CI or an
+image and supplying `APP_BASE_URL` at `npm start`, the shape this README and `.env.example`
+describe, would then have taken the build machine's answer — no HSTS for an https deployment,
+or a year of https-only announced over plain http from an image built with an https base URL —
+and could not carry a nonce at all. The policy itself is in `src/lib/security-headers.ts`, and
+`test/headers.test.ts` checks what it says, that it is the block above word for word, and that
+a change to the environment alone changes what is served.
 
 ## Abuse resistance
 
@@ -665,9 +751,15 @@ src/lib/archive-client.ts  Removing a clip from the browser, asking first when i
 src/lib/account-data.ts  The data export and account deletion
 src/lib/push.ts     Web Push subscriptions and the one daily notification
 src/lib/effects.ts  Haptics, chimes and motion preferences
-src/proxy.ts        Puts the security headers on every response as it is answered
+src/proxy.ts        Puts the security headers, and a fresh script nonce, on every response
 src/lib/security-headers.ts  The policy those headers carry
+src/app/not-found.tsx  The page for an address the app does not have
+src/components/Started.tsx  Tells the safety net the app has started
+public/guard.js     The safety net: a note when a page's scripts fail to load or throw
 public/sw.js        Service worker: notifications only, no caching
+public/robots.txt, public/.well-known/security.txt  What a website serves beside its pages
 src/lib/db.ts       SQLite schema (node:sqlite)
 test/               Unit tests
+scripts/smoke.sh    The end-to-end walk over HTTP
+scripts/browser-walk.mjs  The end-to-end walk in Chromium, under the real headers
 ```

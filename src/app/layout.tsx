@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Sora } from "next/font/google";
 import "./globals.css";
 import { DEFAULT_ACCENT } from "@/lib/accent";
+import { Started } from "@/components/Started";
 import { currentUser } from "@/lib/session";
 import { reduceMotionAttribute } from "@/lib/motion";
 import { DEFAULT_PREFS, getSettings } from "@/lib/settings";
@@ -39,7 +40,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       data-reduce-motion={reduceMotionAttribute(prefs.reduceMotion)}
       style={{ ["--font-display" as string]: `var(--font-display-face), ${"ui-sans-serif, system-ui, sans-serif"}` }}
     >
-      <body>{children}</body>
+      <head>
+        {/* The safety net, on its own file: see public/guard.js. Allowed by script-src 'self',
+            so it needs no nonce; async like the framework's own scripts, since it watches for
+            what fails rather than running ahead of it. */}
+        <script src="/guard.js" async />
+      </head>
+      <body>
+        <noscript>
+          <p className="noscript-note">
+            The Daily Scroll needs JavaScript: signing in, the scroll and every button run on it. Turn it on for this
+            site and reload the page.
+          </p>
+        </noscript>
+        <Started />
+        {children}
+      </body>
     </html>
   );
 }

@@ -742,3 +742,17 @@ button.recap-chip[aria-pressed="true"] { background: var(--fg); color: var(--bg)
     }
   }
 }
+
+/* ---- When the app cannot start ------------------------------------------
+   The note public/guard.js puts at the top of a page whose scripts failed to
+   load or threw before the app started, and the one a browser without
+   JavaScript shows instead. Both name what to do; neither needs a script. The
+   page colour rather than the card's, which the wire theme makes transparent:
+   the guard's note stays over the page as it scrolls. */
+.boot-note, .noscript-note {
+  margin: 0; padding: calc(12px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) 12px calc(20px + env(safe-area-inset-left));
+  background: var(--bg); color: var(--fg); border-bottom: 2px solid var(--danger);
+  font-size: 15px; line-height: 1.5; text-align: center;
+}
+.boot-note { position: sticky; top: 0; z-index: 100; }
+.boot-note .btn { margin-left: 8px; vertical-align: middle; }

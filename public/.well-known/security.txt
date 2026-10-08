@@ -1,0 +1,6 @@
+# The Daily Scroll. SECURITY.md says what is in scope; reports go to GitHub's private
+# vulnerability reporting rather than a public issue.
+Contact: https://github.com/Platteration/notenote/security/advisories/new
+Expires: 2027-10-08T00:00:00.000Z
+Preferred-Languages: en
+Policy: https://github.com/Platteration/notenote/blob/main/SECURITY.md
