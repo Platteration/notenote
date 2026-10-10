@@ -20,6 +20,17 @@ export function posterShape(width: number, height: number): PosterShape | undefi
 
 export type ScrollKeyAction = "next" | "prev" | "open";
 
+/** The end screen has index items.length; a completed scroll resumes there. */
+export function resumeScrollIndex(items: ReadonlyArray<{ key: string }>, seen: ReadonlySet<string>): number {
+  const unseen = items.findIndex((item) => !seen.has(item.key));
+  return unseen < 0 ? items.length : unseen;
+}
+
+/** Include the end screen as a real navigation position. */
+export function nextScrollIndex(current: number, delta: number, count: number): number {
+  return Math.max(0, Math.min(count, current + delta));
+}
+
 interface KeyLike {
   key: string;
   altKey: boolean;
