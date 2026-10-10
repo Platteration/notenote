@@ -1,4 +1,5 @@
-import { assertPublicHost, BlockedHostError } from "../net-guard";
+import { assertPublicUrl, publicSocketLookup, BlockedHostError } from "../net-guard";
+import { publicRequest } from "../public-request";
 
 /**
  * How long a single call to a platform may take. Without this a hung platform would hold
@@ -96,7 +97,8 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
   for (let hop = 0; ; hop++) {
     let res: Response;
     try {
-      res = await fetch(target, { ...init, method, headers, body, redirect: "manual", cache: "no-store", signal });
+      assertPublicUrl(target);
+      res = await publicRequest(target, { ...init, method, headers, body, redirect: "manual", signal }, publicSocketLookup());
     } catch (err) {
       // fetch reports both an abort and a network failure by throwing; only the first is a timeout.
       if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
@@ -112,6 +114,9 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       return JSON.parse(text) as T;
     }
 
+    // Release the previous response before validation can throw or the next hop opens.
+    await res.body?.cancel().catch(() => {});
+
     if (hop >= MAX_REDIRECTS) throw new Error(`${provider} redirected more than ${MAX_REDIRECTS} times`);
     let next: URL;
     try {
@@ -124,7 +129,7 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
     }
     // The whole point of the guard is that the destination is checked, not merely the name
     // that was typed. A redirect is a new destination.
-    await assertPublicHost(next.hostname);
+    assertPublicUrl(next.href);
     if (new URL(target).origin !== next.origin) {
       // A bearer token is issued for one origin; a redirect elsewhere must not carry it.
       headers.delete("authorization");
@@ -136,7 +141,6 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       headers.delete("content-type");
       headers.delete("content-length");
     }
-    await res.body?.cancel().catch(() => {});
     target = next.href;
   }
 }

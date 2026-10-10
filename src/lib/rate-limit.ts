@@ -21,9 +21,11 @@ interface Bucket {
 }
 
 const buckets = new Map<string, Bucket>();
+/** Distinct unauthenticated account strings must not grow process state indefinitely. */
+export const MAX_RATE_LIMIT_BUCKETS = 10_000;
 let lastSweep = 0;
 
-/** Drop expired buckets occasionally so the map can't grow without bound. */
+/** Drop expired buckets occasionally; the cardinality cap also covers sustained new keys. */
 function sweep(now: number): void {
   if (now - lastSweep < 60_000) return;
   lastSweep = now;
@@ -36,13 +38,25 @@ export function rateLimit(key: string, limit: number, windowMs: number, now: num
   sweep(now);
   const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
+    buckets.delete(key);
+    if (buckets.size >= MAX_RATE_LIMIT_BUCKETS) buckets.delete(buckets.keys().next().value!);
     buckets.set(key, { count: 1, resetAt: now + windowMs });
     return { ok: true, remaining: limit - 1, retryAfter: 0 };
   }
+  // Recently used limits survive pressure; admitting a new key never globally locks sign-in.
+  buckets.delete(key);
+  buckets.set(key, bucket);
   bucket.count++;
   const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
   if (bucket.count > limit) return { ok: false, remaining: 0, retryAfter };
   return { ok: true, remaining: limit - bucket.count, retryAfter };
+}
+
+/** Charge an existing account hint without retaining a new caller-chosen key. */
+export function rateLimitIfTracked(key: string, limit: number, windowMs: number, now: number = Date.now()): RateLimitResult | null {
+  const bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) return null;
+  return rateLimit(key, limit, windowMs, now);
 }
 
 /**
@@ -72,6 +86,11 @@ export function clearRateLimit(key: string): void {
 export function resetAllRateLimits(): void {
   buckets.clear();
   lastSweep = 0;
+}
+
+/** Only for tests: verify retained state rather than guessing from process memory. */
+export function rateLimitBucketCount(): number {
+  return buckets.size;
 }
 
 /**
