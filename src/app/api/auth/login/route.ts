@@ -1,7 +1,7 @@
 import { MAX_EMAIL_LENGTH, signIn } from "@/lib/auth";
 import { assertSameSite, errorResponse, json, readJson } from "@/lib/api";
 import { UserFacingError } from "@/lib/errors";
-import { clearRateLimit, clientKey, rateLimit, type RateLimitResult } from "@/lib/rate-limit";
+import { clearRateLimit, clientKey, rateLimit, rateLimitIfTracked, type RateLimitResult } from "@/lib/rate-limit";
 import { createSession } from "@/lib/session";
 import { WorkGate } from "@/lib/work-gate";
 
@@ -126,18 +126,16 @@ export async function POST(req: Request) {
     const account = email.slice(0, MAX_EMAIL_LENGTH);
 
     const checks: RateLimitResult[] = [];
-    let ceiling: RateLimitResult | null = null;
     if (email) {
       if (ip) checks.push(rateLimit(`login:acct-ip:${account}:${ip}`, PER_ACCOUNT_IP.limit, PER_ACCOUNT_IP.windowMs));
-      ceiling = rateLimit(`login:acct:${account}`, PER_ACCOUNT.limit, PER_ACCOUNT.windowMs);
     }
     const byAccount = tooMany(checks);
     if (byAccount) return byAccount;
 
-    const overCeiling = ceiling !== null && !ceiling.ok;
-    // Slow rather than refuse: this is the account someone else can name, so the wait is the
-    // only part of the ceiling the owner can be made to pay. Only so many of these are held at
-    // once; see MAX_DELAYED_GUESSES.
+    // Only existing account hints are charged before admission. New attacker-chosen names
+    // cannot consume map entries for requests that the bounded password queue turns away.
+    let ceiling = email ? rateLimitIfTracked(`login:acct:${account}`, PER_ACCOUNT.limit, PER_ACCOUNT.windowMs) : null;
+    let overCeiling = ceiling !== null && !ceiling.ok;
     if (overCeiling && delayedGuesses < MAX_DELAYED_GUESSES) {
       delayedGuesses++;
       try {
@@ -152,6 +150,11 @@ export async function POST(req: Request) {
 
     let user;
     try {
+      // Requests refused by the bounded work queue retain no new account-wide state. Under
+      // high cardinality, the limiter evicts the least recently used hint rather than turning
+      // fresh account names into a deployment-wide lockout.
+      if (email && !ceiling) ceiling = rateLimit(`login:acct:${account}`, PER_ACCOUNT.limit, PER_ACCOUNT.windowMs);
+      overCeiling = ceiling !== null && !ceiling.ok;
       user = await signIn(email, body.password ?? "");
     } catch (err) {
       // Past the ceiling a wrong guess is refused as well as rejected, so the ceiling still

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearRateLimit, clientKey, rateLimit, refundRateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
+import { clearRateLimit, clientKey, MAX_RATE_LIMIT_BUCKETS, rateLimit, rateLimitBucketCount, rateLimitIfTracked, refundRateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
 
 beforeEach(() => resetAllRateLimits());
 
@@ -64,6 +64,28 @@ describe("rate limit", () => {
     // A later call past the sweep interval clears everything already expired.
     rateLimit("trigger", 1, 1_000, T0 + 120_000);
     for (let i = 0; i < 500; i++) expect(rateLimit(`key-${i}`, 1, 1_000, T0 + 120_000).ok).toBe(true);
+  });
+
+  it("bounds sustained distinct keys without denying an existing or fresh account globally", () => {
+    rateLimit("active", 2, 900_000, T0);
+    for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS * 3; i++) {
+      rateLimit(`unknown-${i}`, 1, 900_000, T0);
+      rateLimit("active", Number.MAX_SAFE_INTEGER, 900_000, T0);
+    }
+    expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
+    expect(rateLimit("active", Number.MAX_SAFE_INTEGER, 900_000, T0).remaining).toBeLessThan(Number.MAX_SAFE_INTEGER - 2);
+    expect(rateLimit("honest-new-account", 2, 900_000, T0).ok).toBe(true);
+    expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
+  });
+
+  it("does not allocate unseen account hints before work-queue admission", () => {
+    for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS * 2; i++) {
+      expect(rateLimitIfTracked(`unknown-${i}`, 100, 900_000, T0)).toBeNull();
+    }
+    expect(rateLimitBucketCount()).toBe(0);
+    rateLimit("known", 1, 900_000, T0);
+    expect(rateLimitIfTracked("known", 1, 900_000, T0)?.ok).toBe(false);
+    expect(rateLimitBucketCount()).toBe(1);
   });
 });
 

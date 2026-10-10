@@ -1,4 +1,5 @@
 import { assert, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import https from "node:https";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-push-tests";
@@ -158,6 +159,9 @@ describe("daily delivery", () => {
     expect(payload.body).toContain("60 minutes");
     expect(payload.url).toBe("/feed");
     expect(payload.tag).toBe("daily-scroll-2026-09-06");
+    expect(call[2].agent).toBeInstanceOf(https.Agent);
+    expect(call[2].agent.options.lookup).toBeTypeOf("function");
+    expect(call[2].timeout).toBe(10_000);
   });
 
   it("drops a subscription the push service says is gone", async () => {

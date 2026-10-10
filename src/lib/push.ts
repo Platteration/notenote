@@ -7,7 +7,8 @@
  */
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { getDb, now } from "./db";
-import { assertPublicHost } from "./net-guard";
+import { assertPublicHost, assertPublicUrl, publicSocketLookup } from "./net-guard";
+import https from "node:https";
 
 export interface StoredSubscription {
   endpoint: string;
@@ -156,7 +157,13 @@ export async function notifyHourOpen(userId: string, dayKey: string, minutes: nu
         return;
       }
       try {
-        await webpush.sendNotification(toWebPush(row), payload, { TTL: 60 * 50 });
+        assertPublicUrl(row.endpoint);
+        const agent = new https.Agent({ keepAlive: false, lookup: publicSocketLookup() });
+        try {
+          await webpush.sendNotification(toWebPush(row), payload, { TTL: 60 * 50, timeout: 10_000, agent });
+        } finally {
+          agent.destroy();
+        }
         db.prepare("UPDATE push_subscriptions SET last_open_day = ? WHERE endpoint = ?").run(dayKey, row.endpoint);
         result.sent++;
       } catch (err) {

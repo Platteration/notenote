@@ -8,12 +8,12 @@
  * https service with a trusted certificate would have part of its response handed back in the
  * error message.
  *
- * Note the residual risk: this resolves the name and then fetches it, so a host that answers
- * with a public address here and a private one microseconds later (DNS rebinding) is not
- * covered. Closing that needs the resolved address pinned into the connection itself.
+ * Requests and push delivery use publicSocketLookup: validation happens inside the socket's
+ * lookup and those same addresses are handed to the connection, closing DNS rebinding.
  */
 import { lookup } from "node:dns/promises";
 import net from "node:net";
+import type { LookupFunction } from "node:net";
 
 export class BlockedHostError extends Error {
   constructor(host: string, reason: string) {
@@ -119,6 +119,38 @@ export function privateHostsAllowed(env: Record<string, string | undefined> = pr
  */
 function unbracket(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+export type HostResolver = (host: string) => Promise<Array<{ address: string; family: number }>>;
+const systemResolver: HostResolver = (host) => lookup(host, { all: true, verbatim: true });
+
+/** Resolve once, validate every answer, then hand only those answers to the socket. */
+export function publicSocketLookup(resolver: HostResolver = systemResolver): LookupFunction {
+  return (host, options, callback) => {
+    resolver(unbracket(host)).then((addresses) => {
+      if (!addresses.length) throw new BlockedHostError(host, "the name resolved to nothing");
+      for (const { address } of addresses) {
+        if (!net.isIP(address) || (!privateHostsAllowed() && isPrivateAddress(address))) {
+          throw new BlockedHostError(host, "it resolves to a private or reserved address");
+        }
+      }
+      const chosen = options.family ? addresses.filter((a) => a.family === Number(options.family)) : addresses;
+      if (!chosen.length) throw new BlockedHostError(host, "no address matched the requested family");
+      if (options.all) callback(null, chosen);
+      else callback(null, chosen[0]!.address, chosen[0]!.family);
+    }).catch((err: unknown) => callback(err instanceof Error ? err : new Error(String(err)), "", 0));
+  };
+}
+
+/** IP literals bypass Node's lookup callback and must be checked before opening a socket. */
+export function assertPublicUrl(url: string): void {
+  const target = new URL(url);
+  if (target.protocol !== "https:" && target.protocol !== "http:") throw new BlockedHostError(target.hostname, "only http and https are supported");
+  if (target.username || target.password) throw new BlockedHostError(target.hostname, "credentials in URLs are not supported");
+  const host = unbracket(target.hostname);
+  if (!privateHostsAllowed() && net.isIP(host) && isPrivateAddress(host)) {
+    throw new BlockedHostError(host, "it is a private or reserved address");
+  }
 }
 
 /** Throw unless every address this host resolves to is publicly routable. */
