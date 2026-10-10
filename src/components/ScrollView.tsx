@@ -54,6 +54,8 @@ function Slide({
   const videoRef = useRef<HTMLVideoElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [showReason, setShowReason] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [playing, setPlaying] = useState(false);
   // Posters come in every shape; only the tall ones are cropped to fill the slide.
   const [shape, setShape] = useState<PosterShape | undefined>();
   const measure = useCallback((width: number, height: number) => setShape(posterShape(width, height)), []);
@@ -74,8 +76,8 @@ function Slide({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    return bindScrollPlayback(v, document, active, soundOn);
-  }, [active, soundOn]);
+    return bindScrollPlayback(v, document, active, soundOn, paused);
+  }, [active, soundOn, paused]);
 
   const name = providerName(item.provider);
   // Through the own-property lookup like every other read of this table: the id is a value off
@@ -112,6 +114,8 @@ function Slide({
             playsInline
             muted
             loop
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
             preload={index < 2 ? "auto" : "none"}
             onLoadedMetadata={(e) => measure(e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
           />
@@ -178,6 +182,24 @@ function Slide({
           {item.metrics.comments != null && <span>{compact(item.metrics.comments)} comments</span>}
         </div>
         <div className="slide-actions">
+          {item.videoUrl && <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={!active}
+            aria-label={playing ? "Pause clip" : "Play clip"}
+            onClick={() => {
+              const video = videoRef.current;
+              if (!video) return;
+              if (video.paused) {
+                setPaused(false);
+                // Play directly in the gesture so a browser that blocked autoplay can retry.
+                void video.play().catch(() => {});
+              } else {
+                setPaused(true);
+                video.pause();
+              }
+            }}
+          >{playing ? "Pause" : "Play"}</button>}
           {item.demo ? <span className="chip">Connect a live account for real clips</span> : <a className="btn" href={item.permalink} onClick={open} target="_blank" rel="noopener noreferrer">
             Open in {name}
           </a>}

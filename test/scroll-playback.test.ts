@@ -53,6 +53,22 @@ describe("scroll playback lifecycle", () => {
     expect(video.play).toHaveBeenCalledTimes(1);
     dispose();
   });
+
+  it("keeps an explicitly paused clip paused across visibility changes and reactivation", () => {
+    const page = new Visibility();
+    const video = media();
+    const dispose = bindScrollPlayback(video, page, true, true, true);
+    page.show(false);
+    page.show(true);
+    expect(video.play).not.toHaveBeenCalled();
+    dispose();
+    const stop = bindScrollPlayback(video, page, true, true, true);
+    expect(video.play).not.toHaveBeenCalled();
+    stop();
+    const resume = bindScrollPlayback(video, page, true, true, false);
+    expect(video.play).toHaveBeenCalledTimes(1);
+    resume();
+  });
 });
 
 describe("tracking the completion screen", () => {
@@ -91,6 +107,7 @@ describe("tracking the completion screen", () => {
     expect(source).toContain('disabled={current === items.length}');
     expect(source).toContain('active={!closed && i === current}');
     expect(source).toContain('observeScrollPosition(list, onVisible)');
-    expect(source).toContain('bindScrollPlayback(v, document, active, soundOn)');
+    expect(source).toContain('bindScrollPlayback(v, document, active, soundOn, paused)');
+    expect(source).toContain('aria-label={playing ? "Pause clip" : "Play clip"}');
   });
 });

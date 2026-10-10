@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { tokenKeyState, upgradeCiphertext } from "./crypto";
+import { restrictOwnerOnly } from "./file-permissions";
 
 export interface UserRow {
   id: string;
@@ -181,9 +182,9 @@ declare global {
  * platform token, every push endpoint with its keys. Best effort, because a filesystem with no
  * modes, or a path owned by someone else, must not stop the app from starting — but it says so.
  */
-function restrict(target: string, mode: number): void {
+function restrict(target: string, mode: 0o600 | 0o700): void {
   try {
-    fs.chmodSync(target, mode);
+    restrictOwnerOnly(target, mode);
   } catch {
     console.warn(`Could not make ${target} owner-only; check its permissions by hand.`);
   }
@@ -212,10 +213,12 @@ let databasePredatesProcess: boolean | null = null;
 
 export function getDb(): DatabaseSync {
   if (globalThis.__dailyScrollDb) return globalThis.__dailyScrollDb;
-  const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
-  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  restrict(dataDir, 0o700);
   const file = databasePath();
+  const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
+  if (file !== ":memory:") {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    restrict(dataDir, 0o700);
+  }
   databasePredatesProcess ??= databaseExists();
   // A salt generated on this start, next to a database that was already here, means the key this
   // process derived is not the key that database's tokens were written under. Resolved before

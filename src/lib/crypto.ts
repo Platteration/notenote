@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { restrictOwnerOnly } from "./file-permissions";
 
 /**
  * scrypt is deliberately expensive — around 50-150ms per call. The synchronous form spends
@@ -181,7 +182,9 @@ function writeSalt(file: string): Buffer {
   const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    restrictOwnerOnly(path.dirname(file), 0o700);
     fs.writeFileSync(temporary, serialiseSalt(crypto.randomBytes(SALT_BYTES)), { mode: 0o600 });
+    restrictOwnerOnly(temporary, 0o600);
     try {
       fs.linkSync(temporary, file);
     } catch {
@@ -215,6 +218,7 @@ function describeSaltFile(file: string, salt: Buffer): void {
   const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
   try {
     fs.writeFileSync(temporary, serialiseSalt(salt), { mode: 0o600 });
+    restrictOwnerOnly(temporary, 0o600);
     fs.renameSync(temporary, file);
   } catch {
     try {

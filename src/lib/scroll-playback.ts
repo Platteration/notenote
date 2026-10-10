@@ -4,10 +4,11 @@ export function bindScrollPlayback(
   page: Pick<Document, "hidden" | "addEventListener" | "removeEventListener">,
   active: boolean,
   soundOn: boolean,
+  paused = false,
 ): () => void {
   const sync = () => {
     video.muted = !soundOn;
-    if (active && !page.hidden) void video.play().catch(() => {});
+    if (active && !paused && !page.hidden) void video.play().catch(() => {});
     else video.pause();
   };
   page.addEventListener("visibilitychange", sync);
