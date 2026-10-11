@@ -600,8 +600,11 @@ files to 0600, and says so on the console if the filesystem will not have it.
 On Windows, where Node's chmod cannot restrict access by account, the app uses Windows
 PowerShell's .NET filesystem APIs to install a protected ACL granting only the server's
 current identity full control. The directory passes that policy to new children; newly
-written salt files are restricted before publication too. Run backup jobs under that identity,
-or arrange backup access explicitly. Unix permissions retain their existing meaning.
+written salt files are restricted before publication too. If the volume refuses a permission
+change, the app warns so the operator can arrange access controls separately, while still
+persisting to a writable volume. Failure to create or read a usable salt still stops startup.
+Run backup jobs under the server identity, or arrange backup access explicitly.
+Unix permissions retain their existing meaning.
 
 The key those tokens are encrypted under is stretched rather than hashed: scrypt over
 `SESSION_SECRET` with a random per-deployment salt in `DATA_DIR/token-key.salt`, derived once at
