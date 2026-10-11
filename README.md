@@ -386,6 +386,10 @@ address the server itself is configured with. Start the app, then `bash scripts/
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
 
+On Windows, run the checks from Git Bash (or put Git's `bin` directory ahead of
+`System32` in this terminal's `PATH`) so `bash` does not resolve to an unconfigured WSL
+launcher. Git attributes keep the checked-in scripts and pinned documents in LF form.
+
 `npm run smoke` is a longer walk against a running server that also runs on Windows: it adds
 empty-feed recovery, concurrent requests, watch history, mute persistence, theme and accent
 settings (including a rejected accent), the archive while the hour is shut (a note, a
@@ -593,6 +597,14 @@ operator made themselves — an ordinary `mkdir`, a systemd `StateDirectory=`, a
 all of which arrive at 0755 — while SQLite creates the database, its write-ahead log and its
 shared-memory file at 0644. Each open therefore restricts the directory to 0700 and those three
 files to 0600, and says so on the console if the filesystem will not have it.
+On Windows, where Node's chmod cannot restrict access by account, the app uses Windows
+PowerShell's .NET filesystem APIs to install a protected ACL granting only the server's
+current identity full control. The directory passes that policy to new children; newly
+written salt files are restricted before publication too. If the volume refuses a permission
+change, the app warns so the operator can arrange access controls separately, while still
+persisting to a writable volume. Failure to create or read a usable salt still stops startup.
+Run backup jobs under the server identity, or arrange backup access explicitly.
+Unix permissions retain their existing meaning.
 
 The key those tokens are encrypted under is stretched rather than hashed: scrypt over
 `SESSION_SECRET` with a random per-deployment salt in `DATA_DIR/token-key.salt`, derived once at

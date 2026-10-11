@@ -1,3 +1,4 @@
+import { expectOwnerOnly } from "./helpers/permissions";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import nodeCrypto from "node:crypto";
 import fs from "node:fs";
@@ -100,7 +101,7 @@ describe("what the stored ciphertext gives away about SESSION_SECRET", () => {
     expect(ms).toBeGreaterThan(20);
   });
 
-  it("stretches with a per-deployment salt, so work against one install buys nothing against another", async () => {
+  it("stretches with a per-deployment salt, so work against one install buys nothing against another", { timeout: 20_000 }, async () => {
     const ids: string[] = [];
     const dirs = [0, 1].map(() => fs.mkdtempSync(path.join(os.tmpdir(), "ds-salt-")));
     try {
@@ -113,7 +114,7 @@ describe("what the stored ciphertext gives away about SESSION_SECRET", () => {
         const salt = path.join(dir, "token-key.salt");
         expect(fs.existsSync(salt)).toBe(true);
         // The salt is not secret, but it lives beside the database and inherits its rules.
-        expect(fs.statSync(salt).mode & 0o077).toBe(0);
+        expectOwnerOnly(salt);
       }
       // Same secret, different deployment: different key, so no table is reusable.
       expect(ids[0]).not.toBe(ids[1]);

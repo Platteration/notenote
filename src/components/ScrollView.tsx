@@ -13,7 +13,8 @@ import { explainReason, reasonBars } from "@/lib/explain";
 import type { FeedPayload } from "@/lib/feed";
 import { openInNativeApp } from "@/lib/open-native";
 import { providerMeta, providerName } from "@/lib/providers/meta";
-import { posterShape, scrollKeyAction, type PosterShape } from "@/lib/scroll-ui";
+import { nextScrollIndex, posterShape, resumeScrollIndex, scrollKeyAction, type PosterShape } from "@/lib/scroll-ui";
+import { bindScrollPlayback, observeScrollPosition } from "@/lib/scroll-playback";
 import type { MediaItem } from "@/lib/providers/types";
 import type { Prefs } from "@/lib/settings";
 
@@ -37,7 +38,6 @@ function Slide({
   saved,
   muted,
   reason,
-  onVisible,
   onSave,
   onMute,
 }: {
@@ -48,14 +48,14 @@ function Slide({
   saved: boolean;
   muted: boolean;
   reason: CurationReason | undefined;
-  onVisible: (key: string) => void;
   onSave: (item: MediaItem) => void;
   onMute: (item: MediaItem) => void;
 }) {
-  const ref = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [showReason, setShowReason] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [playing, setPlaying] = useState(false);
   // Posters come in every shape; only the tall ones are cropped to fill the slide.
   const [shape, setShape] = useState<PosterShape | undefined>();
   const measure = useCallback((width: number, height: number) => setShape(posterShape(width, height)), []);
@@ -76,23 +76,8 @@ function Slide({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.muted = !soundOn;
-    if (active) void v.play().catch(() => {});
-    else v.pause();
-  }, [active, soundOn]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) if (e.isIntersecting && e.intersectionRatio >= 0.6) onVisible(item.key);
-      },
-      { threshold: [0.6] },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [item.key, onVisible]);
+    return bindScrollPlayback(v, document, active, soundOn, paused);
+  }, [active, soundOn, paused]);
 
   const name = providerName(item.provider);
   // Through the own-property lookup like every other read of this table: the id is a value off
@@ -105,7 +90,7 @@ function Slide({
     openInNativeApp(item);
   };
   return (
-    <article className={`slide${muted ? " slide-muted" : ""}`} ref={ref} data-index={index} data-poster={shape} aria-label={item.title}>
+    <article className={`slide${muted ? " slide-muted" : ""}`} data-index={index} data-poster={shape} aria-label={item.title}>
       {!item.demo && <a
         className="slide-tap"
         href={item.permalink}
@@ -129,6 +114,8 @@ function Slide({
             playsInline
             muted
             loop
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
             preload={index < 2 ? "auto" : "none"}
             onLoadedMetadata={(e) => measure(e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
           />
@@ -195,6 +182,24 @@ function Slide({
           {item.metrics.comments != null && <span>{compact(item.metrics.comments)} comments</span>}
         </div>
         <div className="slide-actions">
+          {item.videoUrl && <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={!active}
+            aria-label={playing ? "Pause clip" : "Play clip"}
+            onClick={() => {
+              const video = videoRef.current;
+              if (!video) return;
+              if (video.paused) {
+                setPaused(false);
+                // Play directly in the gesture so a browser that blocked autoplay can retry.
+                void video.play().catch(() => {});
+              } else {
+                setPaused(true);
+                video.pause();
+              }
+            }}
+          >{playing ? "Pause" : "Play"}</button>}
           {item.demo ? <span className="chip">Connect a live account for real clips</span> : <a className="btn" href={item.permalink} onClick={open} target="_blank" rel="noopener noreferrer">
             Open in {name}
           </a>}
@@ -233,7 +238,9 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   const listRef = useRef<HTMLDivElement>(null);
   const [closed, setClosed] = useState(false);
   const [watchedAtClose, setWatchedAtClose] = useState<string[]>([]);
-  const [current, setCurrent] = useState(0);
+  const [current, setCurrent] = useState(() => resumeScrollIndex(items, new Set(initial.seenKeys)));
+  const resumeIndex = useRef(current);
+  const visibleIndex = useRef(current);
   const seenRef = useRef<Set<string>>(new Set(initial.seenKeys));
   const watchedRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<Set<string>>(new Set());
@@ -344,31 +351,36 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   }, []);
 
   const onVisible = useCallback(
-    (key: string) => {
-      const idx = items.findIndex((it) => it.key === key);
-      if (idx >= 0) {
-        setCurrent((prev) => {
-          if (prev !== idx) haptic(prefs, 8);
-          return idx;
-        });
-      }
+    (idx: number) => {
+      if (closed) return;
+      setCurrent(idx);
+      if (visibleIndex.current !== idx) haptic(prefs, 8);
+      visibleIndex.current = idx;
+      const item = items[idx];
+      // The end screen stops playback but is not itself a watched clip.
+      if (!item) return;
+      const key = item.key;
       watchedRef.current.add(key);
       if (seenRef.current.has(key)) return;
       seenRef.current.add(key);
       pendingRef.current.add(key);
     },
-    [items, prefs],
+    [closed, items, prefs],
   );
 
   // Resume where you left off within the hour.
   useEffect(() => {
-    const firstUnseen = items.findIndex((it) => !seenRef.current.has(it.key));
-    if (firstUnseen > 0 && listRef.current) {
-      const el = listRef.current.querySelector<HTMLElement>(`[data-index="${firstUnseen}"]`);
+    if (resumeIndex.current > 0 && listRef.current) {
+      const el = listRef.current.querySelector<HTMLElement>(`[data-index="${resumeIndex.current}"]`);
       el?.scrollIntoView({ block: "start" });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || closed) return;
+    return observeScrollPosition(list, onVisible);
+  }, [closed, onVisible]);
 
   const close = useCallback(() => {
     setWatchedAtClose([...watchedRef.current]);
@@ -380,7 +392,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
   /** Move by one clip, or onto the end slide; shared by the keyboard and the stage arrows. */
   const step = useCallback(
     (delta: number) => {
-      const next = Math.max(0, Math.min(items.length, current + delta));
+      const next = nextScrollIndex(current, delta, items.length);
       listRef.current
         ?.querySelector<HTMLElement>(next === items.length ? ".end-slide" : `[data-index="${next}"]`)
         ?.scrollIntoView({ block: "start", behavior: scrollBehavior(prefs) });
@@ -459,7 +471,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
 
   return (
     <div className="scroll-shell">
-      <header className="scroll-top">
+      <header className="scroll-top" inert={closed}>
         <div className="scroll-top-row">
           <Link href="/connect">← Exit</Link>
           <span>
@@ -510,13 +522,12 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
             saved={savedKeys.has(item.key)}
             muted={mutedCreators.has(`${item.provider}:${item.creatorHandle.toLowerCase()}`)}
             reason={initial.reasons?.[item.key]}
-            onVisible={onVisible}
             onSave={onSave}
             onMute={onMute}
           />
         ))}
         {items.length > 0 && (
-          <section className="slide end-slide">
+          <section className="slide end-slide" data-index={items.length}>
             <div>
               <h2>That&apos;s the scroll.</h2>
               <p>
@@ -536,7 +547,7 @@ export function ScrollView({ initial, prefs }: { initial: FeedPayload; prefs: Pr
           <button type="button" className="stage-arrow" aria-label="Previous clip" disabled={current === 0} onClick={() => step(-1)}>
             ↑
           </button>
-          <button type="button" className="stage-arrow" aria-label="Next clip" onClick={() => step(1)}>
+          <button type="button" className="stage-arrow" aria-label="Next clip" disabled={current === items.length} onClick={() => step(1)}>
             ↓
           </button>
         </div>

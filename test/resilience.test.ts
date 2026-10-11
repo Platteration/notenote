@@ -6,6 +6,10 @@ process.env.SESSION_SECRET = "test-secret-for-resilience-tests";
 process.env.PROVIDER_TIMEOUT_MS = "60";
 process.env.PROVIDER_BUDGET_MS = "150";
 
+// Spy on today's transport, leaving the real implementation in place for the socket test.
+
+const transport = await import("@/lib/public-request");
+
 const { signUp } = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
 const { encrypt } = await import("@/lib/crypto");
@@ -14,7 +18,6 @@ const { getJson, ProviderTimeoutError, requestTimeoutMs } = await import("@/lib/
 const { PROVIDERS } = await import("@/lib/providers");
 const { purgeExpired, purgeExpiredIfDue, resetPurgeSchedule } = await import("@/lib/feed");
 
-const realFetch = globalThis.fetch;
 let userId: string;
 
 beforeAll(async () => {
@@ -22,7 +25,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  globalThis.fetch = realFetch;
+  delete process.env.ALLOW_PRIVATE_PROVIDER_HOSTS;
   vi.restoreAllMocks();
 });
 
@@ -33,13 +36,13 @@ describe("per-request timeouts", () => {
 
   it("gives up on a platform that never answers", async () => {
     // Never resolves on its own; only the abort signal ends it.
-    globalThis.fetch = vi.fn((_url, init?: RequestInit) => {
+    vi.spyOn(transport, "publicRequest").mockImplementation((_url, init?: RequestInit) => {
       return new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => {
           reject(Object.assign(new Error("aborted"), { name: "TimeoutError" }));
         });
       });
-    }) as unknown as typeof fetch;
+    });
 
     const started = Date.now();
     await expect(getJson("TestPlatform", "https://example.test/slow")).rejects.toThrow(ProviderTimeoutError);
@@ -51,6 +54,7 @@ describe("per-request timeouts", () => {
     // The mocked cases above assume how an aborted fetch surfaces; this proves it against
     // the real runtime, where the abort arrives as a DOMException named TimeoutError.
     const http = await import("node:http");
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     const server = http.createServer(() => {});
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address() as { port: number };
@@ -59,21 +63,22 @@ describe("per-request timeouts", () => {
       await expect(getJson("TestPlatform", `http://127.0.0.1:${port}/hang`)).rejects.toThrow(ProviderTimeoutError);
       expect(Date.now() - started).toBeLessThan(2000);
     } finally {
+      server.closeAllConnections();
       server.close();
     }
   });
 
   it("passes a network failure through unchanged rather than calling it a timeout", async () => {
-    globalThis.fetch = vi.fn(() => Promise.reject(new TypeError("network down"))) as unknown as typeof fetch;
+    vi.spyOn(transport, "publicRequest").mockRejectedValue(new TypeError("network down"));
     await expect(getJson("TestPlatform", "https://example.test/x")).rejects.toThrow(/network down/);
   });
 
   it("leaves a caller's own signal in place", async () => {
     const seen: Array<AbortSignal | null | undefined> = [];
-    globalThis.fetch = vi.fn((_url, init?: RequestInit) => {
+    vi.spyOn(transport, "publicRequest").mockImplementation((_url, init?: RequestInit) => {
       seen.push(init?.signal);
       return Promise.resolve(new Response("{}", { status: 200 }));
-    }) as unknown as typeof fetch;
+    });
     const mine = new AbortController().signal;
     await getJson("TestPlatform", "https://example.test/x", { signal: mine });
     expect(seen[0]).toBe(mine);
