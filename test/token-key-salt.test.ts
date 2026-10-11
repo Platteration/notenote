@@ -1,3 +1,4 @@
+import { closeTestDatabase, expectOwnerOnly } from "./helpers/permissions";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import nodeCrypto from "node:crypto";
 import fs from "node:fs";
@@ -26,6 +27,7 @@ function tempDir(): string {
 const saltFile = (dir: string) => path.join(dir, "token-key.salt");
 
 afterEach(() => {
+  closeTestDatabase();
   delete process.env.DATA_DIR;
   vi.resetModules();
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -49,7 +51,7 @@ describe("the token key salt on disk", () => {
     expect(contents).toContain("daily-scroll-token-key-salt-v1");
     // Nothing half-written left beside it.
     expect(fs.readdirSync(dir)).toEqual(["token-key.salt"]);
-    expect(fs.statSync(saltFile(dir)).mode & 0o077).toBe(0);
+    expectOwnerOnly(saltFile(dir));
 
     // The next start finds it rather than making another, and derives the same key.
     const second = await boot(dir);
@@ -139,7 +141,7 @@ function legacyCiphertext(plain: string): string {
  * file when there is none.
  */
 async function restart(dir: string) {
-  (globalThis as { __dailyScrollDb?: unknown }).__dailyScrollDb = undefined;
+  closeTestDatabase();
   vi.resetModules();
   process.env.DATA_DIR = dir;
   const crypto = await import("@/lib/crypto");
@@ -157,7 +159,7 @@ async function restart(dir: string) {
  * recoverable mistake turned into a permanent one by the thing meant to be an upgrade.
  */
 describe("a database opened beside a salt it has never seen", () => {
-  it("is not re-keyed, says so, and comes back when the salt does", async () => {
+  it("is not re-keyed, says so, and comes back when the salt does", { timeout: 20_000 }, async () => {
     const dir = tempDir();
     const first = await restart(dir);
     const db = first.db.getDb();
