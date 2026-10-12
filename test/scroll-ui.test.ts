@@ -1,6 +1,27 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { posterShape, scrollKeyAction } from "@/lib/scroll-ui";
+import { nextScrollIndex, posterShape, resumeScrollIndex, scrollKeyAction } from "@/lib/scroll-ui";
+
+describe("resuming and finishing the scroll", () => {
+  const items = [{ key: "one" }, { key: "two" }, { key: "three" }];
+
+  it("resumes at the first unwatched clip, ignoring unrelated history", () => {
+    expect(resumeScrollIndex(items, new Set(["one", "other"])) ).toBe(1);
+    expect(resumeScrollIndex(items, new Set(["two"])) ).toBe(0);
+  });
+
+  it("resumes a completed feed at its end screen rather than replaying it", () => {
+    expect(resumeScrollIndex(items, new Set(items.map((item) => item.key)))).toBe(3);
+    expect(resumeScrollIndex([], new Set())).toBe(0);
+  });
+
+  it("returns from the end to the last clip and clamps navigation at both ends", () => {
+    expect(nextScrollIndex(3, -1, 3)).toBe(2);
+    expect(nextScrollIndex(2, 1, 3)).toBe(3);
+    expect(nextScrollIndex(3, 1, 3)).toBe(3);
+    expect(nextScrollIndex(0, -1, 3)).toBe(0);
+  });
+});
 
 describe("poster shapes", () => {
   it("classifies the shapes the platforms hand back", () => {

@@ -22,6 +22,8 @@ SCRATCH_DATA_DIR=""
 if [ -z "${DATA_DIR:-}" ]; then
   DATA_DIR="$(mktemp -d)"
   SCRATCH_DATA_DIR="$DATA_DIR"
+  # Git Bash translates command arguments for Windows Node, but not environment values.
+  if command -v cygpath >/dev/null 2>&1; then DATA_DIR="$(cygpath -w "$DATA_DIR")"; fi
 fi
 export DATA_DIR
 

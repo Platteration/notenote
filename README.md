@@ -120,20 +120,22 @@ of whatever answered, through the error message the Connections page renders. Re
 read through a counting stream and refused past 512 KB, since a destination the user chose can
 otherwise stream for the whole deadline.
 
-Two limits worth stating. The check resolves the name and the connection then resolves it
-again, so a host answering publicly to the first and privately to the second (DNS rebinding)
-passes the check. What keeps that from reaching anything is TLS: the host a user names must be
-https, and while the guard is on a redirect is only followed to https, so the connection has to
-present a certificate for the name that was checked, which an internal service cannot do, and
-it fails before a request is sent. A redirect to plain http used to be followed, and a
-rebinding name behind one put a GET of the host's choosing on an internal service, whose
-status then came back in the feed's `sources` as that platform's failure ("http 404"); it is
-now refused (`test/rebinding.test.ts` stages exactly that). What remains
-is the attempt itself: a connection and a TLS greeting to an address and port the host picks,
-reported only as "unavailable" or "timed out". Closing that too needs the resolved address
-pinned into the connection itself. And `ALLOW_PRIVATE_PROVIDER_HOSTS=1` turns the guard off,
-plain-http redirects included, for operators deliberately running a PDS on their own network —
-off by default, because the safe choice shouldn't require reading the documentation.
+A check that resolves a name and then lets the connection resolve it again is passed by DNS
+rebinding: a host answering publicly to the first query and privately to the second. So the
+connection's own lookup is the check. Every hop `getJson` makes, the first included, and every
+push delivery opens its socket through `publicSocketLookup` (`src/lib/net-guard.ts`, with the
+exchange itself in `src/lib/public-request.ts`): the name is resolved once, an answer with any
+private address in it is refused, and the socket connects to the addresses that were checked, so
+there is no second answer to rebind to, over plain http or https alike. An IP literal never
+reaches a lookup and is checked before the socket opens. Before this, what stopped a rebound
+connection was TLS, which refused it at the certificate but only after opening it to the
+address and port the host picked, and a refusal of redirects to plain http, where nothing is
+verified and a rebinding name behind one put a GET of the host's choosing on an internal
+service. That refusal is gone: a redirect to plain http is followed again, its address checked
+like any other. `test/rebinding.test.ts` stages both cases and shows no connection is opened.
+And `ALLOW_PRIVATE_PROVIDER_HOSTS=1` turns the guard off for operators deliberately running a
+PDS on their own network — off by default, because the safe choice shouldn't require reading
+the documentation.
 
 ## When a platform misbehaves
 
@@ -398,6 +400,10 @@ address the server itself is configured with — and that none of the repository
 climbs out of `public/` or `/_next/static`. Start the app, then `bash scripts/smoke.sh`. The
 throttling step needs per-address limits, so it only asserts a 429 when the server was started
 with `TRUSTED_PROXY_HOPS=1`; otherwise it checks the attempts were rejected and says so.
+
+On Windows, run the checks from Git Bash (or put Git's `bin` directory ahead of
+`System32` in this terminal's `PATH`) so `bash` does not resolve to an unconfigured WSL
+launcher. Git attributes keep the checked-in scripts and pinned documents in LF form.
 
 `npm run smoke` is a longer walk against a running server that also runs on Windows: it adds
 empty-feed recovery, concurrent requests, watch history, mute persistence, theme and accent
@@ -698,6 +704,14 @@ operator made themselves — an ordinary `mkdir`, a systemd `StateDirectory=`, a
 all of which arrive at 0755 — while SQLite creates the database, its write-ahead log and its
 shared-memory file at 0644. Each open therefore restricts the directory to 0700 and those three
 files to 0600, and says so on the console if the filesystem will not have it.
+On Windows, where Node's chmod cannot restrict access by account, the app uses Windows
+PowerShell's .NET filesystem APIs to install a protected ACL granting only the server's
+current identity full control. The directory passes that policy to new children; newly
+written salt files are restricted before publication too. If the volume refuses a permission
+change, the app warns so the operator can arrange access controls separately, while still
+persisting to a writable volume. Failure to create or read a usable salt still stops startup.
+Run backup jobs under the server identity, or arrange backup access explicitly.
+Unix permissions retain their existing meaning.
 
 The key those tokens are encrypted under is stretched rather than hashed: scrypt over
 `SESSION_SECRET` with a random per-deployment salt in `DATA_DIR/token-key.salt`, derived once at

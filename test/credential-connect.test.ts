@@ -7,6 +7,12 @@ process.env.SESSION_SECRET = "test-secret-for-credential-connect-tests";
 // call from a stub instead, so there is no name to resolve.
 process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
 
+// Credential response tests replace only the transport. public-socket.test.ts separately
+// exercises the real HTTP(S) boundary; this mock does not verify DNS or TLS.
+vi.mock("@/lib/public-request", () => ({
+  publicRequest: (url: string, init: RequestInit) => globalThis.fetch(url, init),
+}));
+
 const { credentialConnectError } = await import("@/lib/connections");
 const { UserFacingError } = await import("@/lib/errors");
 const { BlockedHostError } = await import("@/lib/net-guard");

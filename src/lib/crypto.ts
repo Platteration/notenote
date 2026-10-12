@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { restrictOwnerOnly } from "./file-permissions";
 
 /**
  * scrypt is deliberately expensive — around 50-150ms per call. The synchronous form spends
@@ -169,6 +170,15 @@ function readSalt(file: string): ParsedSalt | null {
   return salt;
 }
 
+/** Permission hardening must not prevent persistence on an otherwise writable volume. */
+function restrictSaltPermissions(target: string, mode: 0o600 | 0o700, publishedPath = target): void {
+  try {
+    restrictOwnerOnly(target, mode);
+  } catch {
+    console.warn(`Could not make ${publishedPath} owner-only; check its permissions by hand.`);
+  }
+}
+
 /**
  * Write a new salt, completely, before anything can read it.
  *
@@ -181,7 +191,9 @@ function writeSalt(file: string): Buffer {
   const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    restrictSaltPermissions(path.dirname(file), 0o700);
     fs.writeFileSync(temporary, serialiseSalt(crypto.randomBytes(SALT_BYTES)), { mode: 0o600 });
+    restrictSaltPermissions(temporary, 0o600, file);
     try {
       fs.linkSync(temporary, file);
     } catch {
@@ -215,8 +227,10 @@ function describeSaltFile(file: string, salt: Buffer): void {
   const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
   try {
     fs.writeFileSync(temporary, serialiseSalt(salt), { mode: 0o600 });
+    restrictSaltPermissions(temporary, 0o600, file);
     fs.renameSync(temporary, file);
-  } catch {
+  } catch (err) {
+    console.warn(`Could not describe the token key salt at ${file}; keeping the existing salt (${(err as NodeJS.ErrnoException).code ?? (err as Error).message}).`);
     try {
       fs.unlinkSync(temporary);
     } catch {

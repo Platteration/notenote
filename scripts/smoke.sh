@@ -6,7 +6,9 @@ set -euo pipefail
 
 BASE="${BASE:-http://localhost:3000}"
 JAR="$(mktemp)"
-trap 'rm -f "$JAR"' EXIT
+FEED="$(mktemp)"
+BODY="$(mktemp)"
+trap 'rm -f "$JAR" "$FEED" "$BODY"' EXIT
 
 api() { curl -sS -b "$JAR" -c "$JAR" -H "Content-Type: application/json" "$@"; }
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
@@ -48,9 +50,9 @@ NOW_HM="$(TZ="$ZONE" date +%H:%M)"
 api -X PUT "$BASE/api/settings" -d "{\"windowStart\":\"$NOW_HM\",\"feedSize\":20}" -o /dev/null || fail "settings"
 
 echo "-> the feed is curated and balanced"
-api "$BASE/api/feed" > /tmp/smoke-feed.json
+api "$BASE/api/feed" > "$FEED"
 node -e '
-  const feed = require("/tmp/smoke-feed.json");
+  const feed = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   if (feed.status !== "open") throw new Error("feed is not open: " + feed.status);
   if (!feed.items.length) throw new Error("feed is empty");
   const providers = new Set(feed.items.map((i) => i.provider));
@@ -58,10 +60,10 @@ node -e '
   const tooLong = feed.items.filter((i) => i.durationSeconds != null && i.durationSeconds > 90);
   if (tooLong.length) throw new Error(tooLong.length + " clips exceeded short-form length");
   console.log("   " + feed.items.length + " clips from " + [...providers].join(", "));
-'
+' "$FEED"
 
 echo "-> save a clip, then find it on the shelf"
-KEY="$(node -e 'console.log(require("/tmp/smoke-feed.json").items[0].key)')"
+KEY="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).items[0].key)' "$FEED")"
 api -X POST "$BASE/api/saved" -d "{\"key\":\"$KEY\"}" -o /dev/null || fail "save"
 api "$BASE/api/saved" | node -e '
   let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
@@ -179,16 +181,16 @@ for path in /README.md /package.json /.env.example /.git/config /next.config.ts 
   /scripts/e2e.sh /public/guard.js /_next/BUILD_ID /%2e%2e/package.json \
   /_next/static/..%2f..%2f..%2fpackage.json /_next/static/%2e%2e/%2e%2e/%2e%2e/package.json \
   /icons/..%2f..%2fpackage.json /.well-known/..%2f..%2fpackage.json; do
-  code="$(curl -sS --path-as-is -o /tmp/smoke-file -w '%{http_code}' "$BASE$path")"
+  code="$(curl -sS --path-as-is -o "$BODY" -w '%{http_code}' "$BASE$path")"
   [ "$code" = "404" ] || fail "$path answered $code"
-  ! grep -qE '"name": "daily-scroll"|repositoryformatversion|SESSION_SECRET=|export function proxy|NextConfig' /tmp/smoke-file \
+  ! grep -qE '"name": "daily-scroll"|repositoryformatversion|SESSION_SECRET=|export function proxy|NextConfig' "$BODY" \
     || fail "$path served a file from the repository"
 done
 
 echo "-> an oversized body is refused rather than buffered"
-big="$(printf '%070000d' 0 | tr '0' 'x')"
-code="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$BASE/api/auth/login" \
-  -d "{\"email\":\"smoke@example.com\",\"password\":\"$big\"}")"
+# Stream the body: a 70 KB command-line argument exceeds Windows' process argument limit.
+code="$(node -e 'process.stdout.write(JSON.stringify({email:"smoke@example.com",password:"x".repeat(70000)}))' | \
+  curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$BASE/api/auth/login" --data-binary @-)"
 [ "$code" = "413" ] || fail "a 70 KB sign-in body was not refused: $code"
 
 echo "SMOKE PASS"

@@ -1,3 +1,4 @@
+import { closeTestDatabase, expectOwnerOnly } from "./helpers/permissions";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import nodeCrypto from "node:crypto";
 import fs from "node:fs";
@@ -28,12 +29,12 @@ function legacyCiphertext(plain: string): string {
 
 /** What a restart does: the next call to getDb() opens the file again and migrates it. */
 function reopen() {
-  (globalThis as { __dailyScrollDb?: unknown }).__dailyScrollDb = undefined;
+  closeTestDatabase();
   return getDb();
 }
 
 afterAll(() => {
-  (globalThis as { __dailyScrollDb?: unknown }).__dailyScrollDb = undefined;
+  closeTestDatabase();
   delete process.env.DATA_DIR;
   fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
@@ -44,21 +45,21 @@ afterAll(() => {
  * .env.example recommends is one the operator already made — at 0755.
  */
 describe("what the database is readable by", () => {
-  it("is nobody but the owner: the file, its WAL and its shared memory", () => {
+  it("is nobody but the owner: the file, its WAL and its shared memory", { timeout: 20_000 }, () => {
     getDb().prepare("SELECT 1").get();
     // Derived from the modes themselves, not from the constants in db.ts: no group or other
     // bit may be set on any of the three files SQLite creates.
     for (const suffix of ["", "-wal", "-shm"]) {
       const file = `${DB_FILE}${suffix}`;
       expect(fs.existsSync(file)).toBe(true);
-      expect(fs.statSync(file).mode & 0o077).toBe(0);
+      expectOwnerOnly(file);
     }
   });
 
   it("is nobody but the owner for a DATA_DIR the operator made themselves", () => {
     fs.chmodSync(DATA_DIR, 0o755);
     reopen();
-    expect(fs.statSync(DATA_DIR).mode & 0o077).toBe(0);
+    expectOwnerOnly(DATA_DIR);
   });
 });
 

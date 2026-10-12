@@ -1,4 +1,5 @@
-import { assertPublicHost, BlockedHostError, privateHostsAllowed } from "../net-guard";
+import { assertPublicUrl, publicSocketLookup, BlockedHostError } from "../net-guard";
+import { publicRequest } from "../public-request";
 
 /**
  * How long a single call to a platform may take. Without this a hung platform would hold
@@ -126,7 +127,8 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
   for (let hop = 0; ; hop++) {
     let res: Response;
     try {
-      res = await fetch(target, { ...init, method, headers, body, redirect: "manual", cache: "no-store", signal });
+      assertPublicUrl(target);
+      res = await publicRequest(target, { ...init, method, headers, body, redirect: "manual", signal }, publicSocketLookup());
     } catch (err) {
       // fetch reports both an abort and a network failure by throwing; only the first is a timeout.
       if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
@@ -146,6 +148,9 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       }
     }
 
+    // Release the previous response before validation can throw or the next hop opens.
+    await res.body?.cancel().catch(() => {});
+
     if (hop >= MAX_REDIRECTS) throw new Error(`${provider} redirected more than ${MAX_REDIRECTS} times`);
     let next: URL;
     try {
@@ -158,18 +163,11 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       throw new BlockedHostError(next.protocol, "only http and https redirects are followed");
     }
     // The whole point of the guard is that the destination is checked, not merely the name
-    // that was typed. A redirect is a new destination.
-    await assertPublicHost(next.hostname);
-    // The check resolves the name and the connection resolves it again, so a name whose DNS
-    // answer changes in between (rebinding: public for the check, private for the connection)
-    // passes and connects to an address the check never saw. Over https that connection stops
-    // at the certificate, which an internal service cannot present for someone else's name,
-    // before a request is sent. Over plain http nothing is verified and the request goes
-    // through, so a redirect to http is only followed where the operator has turned the guard
-    // off. Every API this app calls, and the Bluesky host a user names, is https to begin with.
-    if (next.protocol === "http:" && !privateHostsAllowed()) {
-      throw new BlockedHostError(next.hostname, "a redirect to plain http is not followed");
-    }
+    // that was typed. A redirect is a new destination. The next hop's socket checks the
+    // addresses its name resolves to and connects to those alone (publicSocketLookup in
+    // net-guard.ts), so a name that rebinds has no second answer to give, over http or https;
+    // this catches an IP literal, which never reaches a lookup.
+    assertPublicUrl(next.href);
     if (new URL(target).origin !== next.origin) {
       // A bearer token is issued for one origin; a redirect elsewhere must not carry it.
       headers.delete("authorization");
@@ -181,7 +179,6 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       headers.delete("content-type");
       headers.delete("content-length");
     }
-    await res.body?.cancel().catch(() => {});
     target = next.href;
   }
 }

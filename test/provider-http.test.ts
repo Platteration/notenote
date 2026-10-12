@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
@@ -31,9 +31,11 @@ describe("redirects are checked, not followed blindly", () => {
     // The exploit: the guard vets the host the user typed, so a PDS they control answers the
     // very first call with a 302 and the server walks into the private network on its behalf.
     const pds = await serve((_req, res) => {
+      delete process.env.ALLOW_PRIVATE_PROVIDER_HOSTS;
       res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data/iam/security-credentials/" });
       res.end();
     });
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     await expect(getJson("Bluesky", `${pds.origin}/xrpc/com.atproto.server.createSession`)).rejects.toThrow(BlockedHostError);
   });
 
@@ -45,9 +47,11 @@ describe("redirects are checked, not followed blindly", () => {
       res.end(JSON.stringify({ secret: "admin-panel" }));
     });
     const pds = await serve((_req, res) => {
+      delete process.env.ALLOW_PRIVATE_PROVIDER_HOSTS;
       res.writeHead(307, { location: `${internal.origin}/admin` });
       res.end();
     });
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     await expect(getJson("Bluesky", `${pds.origin}/xrpc/x`)).rejects.toThrow(/private or reserved address/);
     // A refusal that still made the request would leak through timing alone.
     expect(hits).toBe(0);
@@ -55,9 +59,11 @@ describe("redirects are checked, not followed blindly", () => {
 
   it("does not leak the redirected-to body into the error message", async () => {
     const pds = await serve((_req, res) => {
+      delete process.env.ALLOW_PRIVATE_PROVIDER_HOSTS;
       res.writeHead(302, { location: "http://127.0.0.1:9/nothing" });
       res.end();
     });
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     const err = await getJson("Bluesky", `${pds.origin}/xrpc/x`).catch((e: Error) => e);
     expect(err).toBeInstanceOf(BlockedHostError);
     expect((err as Error).message).not.toMatch(/nothing/);
@@ -65,9 +71,11 @@ describe("redirects are checked, not followed blindly", () => {
 
   it("refuses a scheme that is not http or https", async () => {
     const pds = await serve((_req, res) => {
+      delete process.env.ALLOW_PRIVATE_PROVIDER_HOSTS;
       res.writeHead(302, { location: "file:///etc/passwd" });
       res.end();
     });
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     await expect(getJson("Bluesky", `${pds.origin}/x`)).rejects.toThrow(BlockedHostError);
   });
 });
@@ -141,6 +149,7 @@ describe("redirects that are allowed", () => {
 
 describe("response size", () => {
   it("refuses a body past the cap instead of buffering whatever arrives", async () => {
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     // A hostile destination can stream for the whole request deadline; res.text() would hold
     // all of it. The cap is read from the module so this cannot drift out of step with it.
     const chunk = Buffer.alloc(64 * 1024, 0x61);
@@ -158,6 +167,7 @@ describe("response size", () => {
   });
 
   it("still reads an ordinary reply that fits", async () => {
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     const filler = "x".repeat(1000);
     const server = await serve((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
@@ -173,6 +183,13 @@ describe("response size", () => {
 // and the OAuth callback). The Bluesky host is the connecting user's choice, so those bytes are
 // an account holder's. `format` is what console.error writes for the same arguments.
 describe("what a platform says reaches the log as text, never as control characters", () => {
+  // The stand-in PDS listens on loopback, which `getJson` now refuses at every hop, the first
+  // included, unless the operator has opted out; these cases are about what is quoted, not
+  // about where a request may go, so they take the opt-out the response-size cases take.
+  beforeEach(() => {
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
+  });
+
   /** A forged log line, a screen clear, a window title, and words the operator should still see. */
   const FORGED = "nope\n[connect:tiktok] forged by the PDS\u001b[2J\u001b]0;pwned\u0007 café";
   /** Anything that acts on a terminal or a line-oriented log; the stack trace's own newlines aside. */
