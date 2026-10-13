@@ -51,8 +51,9 @@ describe("per-request timeouts", () => {
   });
 
   it("times out against a real socket that accepts and never answers", async () => {
-    // The mocked cases above assume how an aborted fetch surfaces; this proves it against
-    // the real runtime, where the abort arrives as a DOMException named TimeoutError.
+    // The mocked cases above assume how an aborted request surfaces; this proves it against
+    // the real runtime, where http.request reports the deadline as an AbortError whose cause is
+    // the signal's TimeoutError.
     const http = await import("node:http");
     process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
     const server = http.createServer(() => {});

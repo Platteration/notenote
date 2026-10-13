@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearRateLimit, clientKey, MAX_RATE_LIMIT_BUCKETS, rateLimit, rateLimitBucketCount, rateLimitIfTracked, refundRateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
+import { CALLER_KEYED, clearRateLimit, clientKey, MAX_RATE_LIMIT_BUCKETS, rateLimit, rateLimitBucketCount, rateLimitIfTracked, refundRateLimit, resetAllRateLimits, trustedProxyHops } from "@/lib/rate-limit";
 
 beforeEach(() => resetAllRateLimits());
 
@@ -67,15 +67,57 @@ describe("rate limit", () => {
   });
 
   it("bounds sustained distinct keys without denying an existing or fresh account globally", () => {
-    rateLimit("active", 2, 900_000, T0);
+    // Account names are the caller's to invent, so these are the keys the cap is for.
+    rateLimit("login:acct:active", 2, 900_000, T0);
     for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS * 3; i++) {
-      rateLimit(`unknown-${i}`, 1, 900_000, T0);
-      rateLimit("active", Number.MAX_SAFE_INTEGER, 900_000, T0);
+      rateLimit(`login:acct:unknown-${i}`, 1, 900_000, T0);
+      rateLimit("login:acct:active", Number.MAX_SAFE_INTEGER, 900_000, T0);
     }
     expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
-    expect(rateLimit("active", Number.MAX_SAFE_INTEGER, 900_000, T0).remaining).toBeLessThan(Number.MAX_SAFE_INTEGER - 2);
-    expect(rateLimit("honest-new-account", 2, 900_000, T0).ok).toBe(true);
+    expect(rateLimit("login:acct:active", Number.MAX_SAFE_INTEGER, 900_000, T0).remaining).toBeLessThan(Number.MAX_SAFE_INTEGER - 2);
+    expect(rateLimit("login:acct:honest-new-account", 2, 900_000, T0).ok).toBe(true);
     expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
+  });
+
+  it.each(CALLER_KEYED)("caps keys under %s at the same number, counted for that kind alone", (kind) => {
+    for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS + 50; i++) rateLimit(`${kind}${i}`, 1, 900_000, T0);
+    expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
+  });
+
+  it("never forgets a ceiling the server keyed, whatever floods the keys callers choose", () => {
+    // The deployment-wide sign-up ceiling and a signed-in account's current-password guesses,
+    // each spent. One shared capped map let 10,000 fresh sign-in keys push both out.
+    for (let i = 0; i < 3; i++) rateLimit("signup:deployment", 2, 3_600_000, T0);
+    for (let i = 0; i < 9; i++) rateLimit("password:user-1", 8, 900_000, T0);
+    for (const kind of CALLER_KEYED) {
+      for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS + 1; i++) rateLimit(`${kind}flood-${i}`, 1, 900_000, T0);
+    }
+    expect(rateLimit("signup:deployment", 2, 3_600_000, T0).ok).toBe(false);
+    expect(rateLimit("password:user-1", 8, 900_000, T0).ok).toBe(false);
+  });
+
+  it("does not cap the keys the server chose: there are only as many as there are accounts", () => {
+    for (let i = 0; i < 9; i++) rateLimit("password:user-0", 8, 900_000, T0);
+    for (let i = 1; i <= MAX_RATE_LIMIT_BUCKETS; i++) rateLimit(`password:user-${i}`, 8, 900_000, T0);
+    expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS + 1);
+    expect(rateLimit("password:user-0", 8, 900_000, T0).ok).toBe(false);
+  });
+
+  it("lets a flood of one kind of caller-chosen key push out only keys of that kind", () => {
+    // Fresh addresses are free behind a proxy; they must not empty an account's ceiling, which
+    // costs a password check per key to refill.
+    for (let i = 0; i < 101; i++) rateLimit("login:acct:victim@example.com", 100, 900_000, T0);
+    for (const kind of CALLER_KEYED.filter((k) => k !== "login:acct:")) {
+      for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS + 1; i++) rateLimit(`${kind}flood-${i}`, 1, 900_000, T0);
+    }
+    expect(rateLimitIfTracked("login:acct:victim@example.com", 100, 900_000, T0)?.ok).toBe(false);
+  });
+
+  it("sweeps expired buckets of every kind, not only the server's", () => {
+    rateLimit("login:ip:203.0.113.9", 1, 1_000, T0);
+    rateLimit("password:user-1", 1, 1_000, T0);
+    rateLimit("trigger", 1, 1_000, T0 + 120_000);
+    expect(rateLimitBucketCount()).toBe(1);
   });
 
   it("does not allocate unseen account hints before work-queue admission", () => {

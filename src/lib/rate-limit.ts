@@ -20,26 +20,69 @@ interface Bucket {
   resetAt: number;
 }
 
-const buckets = new Map<string, Bucket>();
-/** Distinct unauthenticated account strings must not grow process state indefinitely. */
+/**
+ * The limits keyed on something the caller chooses, each kept in a map of its own.
+ *
+ * Their keys are an address a client need not own (with a trusted proxy, a fresh one per request
+ * from an IPv6 /64) or an account name it can invent afresh on every request, so nothing bounds
+ * how many there are but a cap: past `MAX_RATE_LIMIT_BUCKETS` in one of these maps, the least
+ * recently used bucket *of that kind* is forgotten to make room. A flood of fresh keys can push
+ * out only another key of its own kind. For a key with an address in it that is no loss, since a
+ * caller rotating addresses gets a fresh one for the asking anyway. For an account name alone it
+ * costs the flood a password check per key, because that bucket is made only once the
+ * verification queue admits the attempt (`login/route.ts`): emptying one account's ceiling takes
+ * 10,000 checks, six to seventeen minutes at the rate that queue drains, to win back the 100
+ * guesses the ceiling allows each fifteen.
+ *
+ * Every other key names something the server chose, not the caller: the deployment-wide sign-up
+ * ceiling, and limits on a signed-in account (`password:`, `credconnect:`). Those are never
+ * forgotten before their window ends. When all of them shared one capped map, 10,000 sign-ins
+ * from fresh addresses (or, with no proxy, 10,000 guesses at invented accounts) pushed the
+ * sign-up ceiling out and registration opened again, and the same eviction reset the eight
+ * current-password guesses a stolen session gets. A new limit keyed on caller input belongs in
+ * this list, or its map grows until each window ends and the sweep collects it.
+ */
+export const CALLER_KEYED = ["login:ip:", "login:acct-ip:", "login:acct:", "signup:ip:"] as const;
+
+/** Distinct caller-chosen keys one kind of limit keeps before it forgets its oldest. */
 export const MAX_RATE_LIMIT_BUCKETS = 10_000;
+
+/** One map per entry of `CALLER_KEYED`, and one (under "") for every key the server chose. */
+const pools = new Map<string, Map<string, Bucket>>();
 let lastSweep = 0;
 
-/** Drop expired buckets occasionally; the cardinality cap also covers sustained new keys. */
+function kindOf(key: string): string {
+  return CALLER_KEYED.find((prefix) => key.startsWith(prefix)) ?? "";
+}
+
+function poolFor(key: string): Map<string, Bucket> {
+  const kind = kindOf(key);
+  let pool = pools.get(kind);
+  if (!pool) {
+    pool = new Map();
+    pools.set(kind, pool);
+  }
+  return pool;
+}
+
+/** Drop expired buckets occasionally; the per-kind cap also covers sustained new keys. */
 function sweep(now: number): void {
   if (now - lastSweep < 60_000) return;
   lastSweep = now;
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt <= now) buckets.delete(key);
+  for (const pool of pools.values()) {
+    for (const [key, bucket] of pool) {
+      if (bucket.resetAt <= now) pool.delete(key);
+    }
   }
 }
 
 export function rateLimit(key: string, limit: number, windowMs: number, now: number = Date.now()): RateLimitResult {
   sweep(now);
+  const buckets = poolFor(key);
   const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
     buckets.delete(key);
-    if (buckets.size >= MAX_RATE_LIMIT_BUCKETS) buckets.delete(buckets.keys().next().value!);
+    if (kindOf(key) && buckets.size >= MAX_RATE_LIMIT_BUCKETS) buckets.delete(buckets.keys().next().value!);
     buckets.set(key, { count: 1, resetAt: now + windowMs });
     return { ok: true, remaining: limit - 1, retryAfter: 0 };
   }
@@ -54,7 +97,7 @@ export function rateLimit(key: string, limit: number, windowMs: number, now: num
 
 /** Charge an existing account hint without retaining a new caller-chosen key. */
 export function rateLimitIfTracked(key: string, limit: number, windowMs: number, now: number = Date.now()): RateLimitResult | null {
-  const bucket = buckets.get(key);
+  const bucket = poolFor(key).get(key);
   if (!bucket || bucket.resetAt <= now) return null;
   return rateLimit(key, limit, windowMs, now);
 }
@@ -71,7 +114,7 @@ export function rateLimitIfTracked(key: string, limit: number, windowMs: number,
  * when nothing came of the request, within the same window.
  */
 export function refundRateLimit(key: string, now: number = Date.now()): void {
-  const bucket = buckets.get(key);
+  const bucket = poolFor(key).get(key);
   // A window that has already reset owes nothing: the attempt being refunded is not in it.
   if (!bucket || bucket.resetAt <= now) return;
   bucket.count = Math.max(0, bucket.count - 1);
@@ -79,18 +122,20 @@ export function refundRateLimit(key: string, now: number = Date.now()): void {
 
 /** Forget a key, e.g. after a successful sign-in, so one bad guess doesn't linger. */
 export function clearRateLimit(key: string): void {
-  buckets.delete(key);
+  poolFor(key).delete(key);
 }
 
 /** Only for tests. */
 export function resetAllRateLimits(): void {
-  buckets.clear();
+  pools.clear();
   lastSweep = 0;
 }
 
 /** Only for tests: verify retained state rather than guessing from process memory. */
 export function rateLimitBucketCount(): number {
-  return buckets.size;
+  let total = 0;
+  for (const pool of pools.values()) total += pool.size;
+  return total;
 }
 
 /**

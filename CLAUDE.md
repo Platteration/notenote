@@ -37,7 +37,10 @@ pins the row list and the enum tables as literals, and that the stylesheet's
 
 The app is its own host: every response (pages, API routes, `/_next/static`, `public/`, the
 not-found page) gets its headers from `src/proxy.ts`, and the policy lives in
-`src/lib/security-headers.ts`. The README's headers block is read by the tests:
+`src/lib/security-headers.ts`. The exceptions never reach the proxy: a `TRACE`, which Next
+answers 500 itself, and whatever Node's HTTP parser refuses (README, "The website: headers and
+hosting"). Next's image optimizer is off (`images.unoptimized`), so `/_next/image` is a 404 under
+the same headers. The README's headers block is read by the tests:
 `test/headers.test.ts` holds it equal to the code word for word, and `scripts/browser-walk.mjs`
 (the second half of `npm run test:e2e`) loads the built app in Chromium under the headers the
 server really sends and fails on any CSP violation, console error, page error, request off the

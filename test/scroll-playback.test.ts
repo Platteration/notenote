@@ -100,6 +100,25 @@ describe("tracking the completion screen", () => {
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("reports the most visible slide when one callback carries several", () => {
+    // A fast swipe crosses two thresholds in one frame, and the browser hands over both entries
+    // together, in no promised order: the one mostly on screen is where the reader is.
+    let deliver!: IntersectionObserverCallback;
+    vi.stubGlobal("IntersectionObserver", vi.fn(function (callback: IntersectionObserverCallback) {
+      deliver = callback;
+      return { observe: vi.fn(), disconnect: vi.fn() };
+    }));
+    const slides = [0, 1, 2].map((index) => ({ dataset: { index: String(index) } }));
+    const root = { querySelectorAll: () => slides } as unknown as HTMLElement;
+    const position = vi.fn();
+    observeScrollPosition(root, position);
+    const entry = (index: number, ratio: number) =>
+      ({ target: slides[index], isIntersecting: true, intersectionRatio: ratio }) as unknown as IntersectionObserverEntry;
+    deliver([entry(1, 0.65), entry(2, 0.95)], {} as IntersectionObserver);
+    deliver([entry(1, 0.9), entry(0, 0.7)], {} as IntersectionObserver);
+    expect(position.mock.calls).toEqual([[2], [1]]);
+  });
+
   it("wires the end position and background focus guard into the view", () => {
     const source = readFileSync("src/components/ScrollView.tsx", "utf8");
     expect(source).toContain('className="slide end-slide" data-index={items.length}');

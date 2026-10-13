@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicHost, BlockedHostError, expandIpv6, isPrivateAddress, privateHostsAllowed } from "@/lib/net-guard";
+import { assertPublicHost, assertPublicUrl, BlockedHostError, expandIpv6, isPrivateAddress, privateHostsAllowed } from "@/lib/net-guard";
 
 describe("private address detection", () => {
   it.each([
@@ -34,6 +34,17 @@ describe("private address detection", () => {
     ["::ffff:169.254.1.2", "link local wearing IPv6, which read group-swapped is public"],
     ["::c0a8:101", "deprecated IPv4-compatible 192.168.1.1"],
     ["::7f00:1", "deprecated IPv4-compatible loopback"],
+    // IPv4 carried by a translator or a tunnel, which a NAT64 gateway or a 6to4 interface would
+    // deliver to the IPv4 address inside.
+    ["64:ff9b::a9fe:a9fe", "metadata through NAT64's well-known prefix"],
+    ["64:ff9b::10.0.0.1", "a private address through NAT64, dotted"],
+    ["64:ff9b::7f00:1", "loopback through NAT64"],
+    ["64:ff9b:1::a00:1", "NAT64's local-use prefix, which is not globally reachable"],
+    ["64:ff9b:1:abcd:1234::1", "anything under the local-use prefix, wherever it puts the IPv4 address"],
+    ["::ffff:0:a00:1", "SIIT's IPv4-translated 10.0.0.1"],
+    ["::ffff:0:c0a8:101", "SIIT's IPv4-translated 192.168.1.1"],
+    ["2002:a9fe:a9fe::1", "metadata as a 6to4 address"],
+    ["2002:c0a8:101::1", "192.168.1.1 as a 6to4 address, which read group-swapped is public"],
     ["fc00::1", "unique local, low end of the range"],
     ["fdff::1", "unique local, high end"],
     ["febf::1", "link local, top of the range"],
@@ -43,7 +54,12 @@ describe("private address detection", () => {
 
   // ::ffff:1.1.192.168 is public, and read group-swapped it would be 192.168.1.1: the byte-order
   // pin from the other side.
-  it.each([["8.8.8.8"], ["1.1.1.1"], ["93.184.216.34"], ["172.15.0.1"], ["172.32.0.1"], ["2606:4700::1111"], ["::ffff:1.1.192.168"]])(
+  // The translated forms of public addresses stay public: 8.8.8.8 through NAT64, SIIT and 6to4,
+  // and 1.1.192.168 as 6to4, which is 192.168.1.1 read group-swapped.
+  it.each([
+    ["8.8.8.8"], ["1.1.1.1"], ["93.184.216.34"], ["172.15.0.1"], ["172.32.0.1"], ["2606:4700::1111"], ["::ffff:1.1.192.168"],
+    ["64:ff9b::808:808"], ["::ffff:0:808:808"], ["2002:808:808::1"], ["2002:101:c0a8::1"],
+  ])(
     "allows the public address %s",
     (ip) => {
       expect(isPrivateAddress(ip)).toBe(false);
@@ -89,6 +105,9 @@ describe("host guard", () => {
     await expect(assertPublicHost("[::ffff:127.0.0.1]")).rejects.toThrow(/private or reserved/);
     // The form a URL actually produces, which a dotted-quad regex would have missed.
     await expect(assertPublicHost("[::ffff:7f00:1]")).rejects.toThrow(/private or reserved/);
+    await expect(assertPublicHost("[64:ff9b::a9fe:a9fe]")).rejects.toThrow(/private or reserved/);
+    expect(() => assertPublicUrl("https://[64:ff9b::a9fe:a9fe]/latest/meta-data/")).toThrow(/private or reserved/);
+    expect(() => assertPublicUrl("https://[2002:a9fe:a9fe::1]/")).toThrow(/private or reserved/);
     await expect(assertPublicHost("[fd00::1]")).rejects.toThrow(/private or reserved/);
   });
 

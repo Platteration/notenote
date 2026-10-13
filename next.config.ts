@@ -14,6 +14,13 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Nothing gains from telling every client which framework and version this is.
   poweredByHeader: false,
+  /**
+   * No image optimizer. The app has no `next/image`, and while the optimizer was on `/_next/image`
+   * answered anyone with resized copies of the files in `public/`, under a policy and a cache
+   * lifetime of its own rather than the proxy's. Off, it answers the app's not-found page like
+   * any other address the app does not serve.
+   */
+  images: { unoptimized: true },
   experimental: {
     /**
      * How much of a request body the framework buffers before any handler runs.

@@ -8,7 +8,7 @@
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { getDb, now } from "./db";
 import { assertPublicHost, assertPublicUrl, publicSocketLookup } from "./net-guard";
-import https from "node:https";
+import { publicRequest } from "./public-request";
 
 export interface StoredSubscription {
   endpoint: string;
@@ -129,6 +129,48 @@ export interface DeliveryResult {
 }
 
 /**
+ * How long one delivery may take, start to finish: the lookup, the connection, the request and
+ * the push service's status line.
+ *
+ * A deadline, not an idle timeout. web-push's own `timeout` is the socket's, which fires only
+ * after that long with nothing arriving, so an endpoint that kept sending was never cut off: one
+ * streaming its reply held the job for as long as it liked, and web-push appended every byte of
+ * that reply to a string (80 MB in 25 s from a stand-in sending 64 KB every 20 ms, with the job
+ * still waiting). The endpoint is whatever an account registered, so whoever holds one chooses it.
+ */
+export const PUSH_DEADLINE_MS = 10_000;
+
+/**
+ * Send one notification and answer the push service's status.
+ *
+ * web-push builds the request (the encrypted payload and the VAPID headers) and this module sends
+ * it, through the same socket-pinned lookup as every provider request: the addresses the name
+ * resolves to are checked and then connected to, so a name that answers publicly to one query and
+ * privately to the next has no second answer to give.
+ */
+async function deliver(row: StoredSubscription, payload: string): Promise<number> {
+  const request = webpush.generateRequestDetails(toWebPush(row), payload, { TTL: 60 * 50 });
+  const headers: Record<string, string> = {};
+  // TTL and Content-Length arrive as numbers whatever web-push's types say.
+  for (const [name, value] of Object.entries(request.headers)) headers[name] = String(value);
+  assertPublicUrl(request.endpoint);
+  const res = await publicRequest(
+    request.endpoint,
+    {
+      method: request.method,
+      headers,
+      body: request.body ? new Uint8Array(request.body) : undefined,
+      signal: AbortSignal.timeout(PUSH_DEADLINE_MS),
+    },
+    publicSocketLookup(),
+  );
+  // The status is all delivery needs, so the reply is never read: cancelling it closes the
+  // connection, and whatever the endpoint goes on sending is not this process's to hold.
+  await res.body?.cancel().catch(() => {});
+  return res.status;
+}
+
+/**
  * Send the "your hour is open" notification once per local day per device.
  * A subscription the push service rejects as gone (404/410) is deleted.
  */
@@ -156,24 +198,22 @@ export async function notifyHourOpen(userId: string, dayKey: string, minutes: nu
         result.failed++;
         return;
       }
+      let status: number;
       try {
-        assertPublicUrl(row.endpoint);
-        const agent = new https.Agent({ keepAlive: false, lookup: publicSocketLookup() });
-        try {
-          await webpush.sendNotification(toWebPush(row), payload, { TTL: 60 * 50, timeout: 10_000, agent });
-        } finally {
-          agent.destroy();
-        }
+        status = await deliver(row, payload);
+      } catch {
+        // Refused by the guard, unreachable, or past the deadline: tried again on the next run.
+        result.failed++;
+        return;
+      }
+      if (status >= 200 && status <= 299) {
         db.prepare("UPDATE push_subscriptions SET last_open_day = ? WHERE endpoint = ?").run(dayKey, row.endpoint);
         result.sent++;
-      } catch (err) {
-        const status = (err as { statusCode?: number }).statusCode;
-        if (status === 404 || status === 410) {
-          removeSubscription(row.endpoint);
-          result.removed++;
-        } else {
-          result.failed++;
-        }
+      } else if (status === 404 || status === 410) {
+        removeSubscription(row.endpoint);
+        result.removed++;
+      } else {
+        result.failed++;
       }
     }),
   );

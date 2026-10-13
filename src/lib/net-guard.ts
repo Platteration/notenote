@@ -79,6 +79,11 @@ export function expandIpv6(addr: string): number[] | null {
   return groups.length === 8 && groups.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff) ? groups : null;
 }
 
+/** The IPv4 address two 16-bit groups carry, judged as one. */
+function carriedIpv4IsPrivate(hi: number, lo: number): boolean {
+  return ipv4IsPrivate([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join("."));
+}
+
 function ipv6IsPrivate(ip: string): boolean {
   const g = expandIpv6(ip);
   if (!g) return true; // otherwise exactly eight groups, so every index below is present
@@ -87,15 +92,25 @@ function ipv6IsPrivate(ip: string): boolean {
   // An IPv4 address in IPv6 clothing is still an IPv4 address, however it is spelled.
   const isMapped = leadingZeros && g[5] === 0xffff;
   const isCompatible = leadingZeros && g[5] === 0;
-  if (isMapped || isCompatible) {
-    const hi = g[6]!;
-    const lo = g[7]!;
-    const v4 = [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
-    // ::  and ::1 fall out of this as 0.0.0.0 and 0.0.0.1, both already refused.
-    return ipv4IsPrivate(v4);
-  }
+  // ::  and ::1 fall out of this as 0.0.0.0 and 0.0.0.1, both already refused.
+  if (isMapped || isCompatible) return carriedIpv4IsPrivate(g[6]!, g[7]!);
 
+  // The same holds where a translator or a tunnel carries IPv4 inside IPv6: on an IPv6-only network
+  // a NAT64 gateway translates 64:ff9b::a9fe:a9fe to 169.254.169.254 unless it was set up to refuse
+  // private destinations. So these are judged by the IPv4 address they carry: SIIT's
+  // IPv4-translated ::ffff:0:0/96 (RFC 6145) and NAT64's well-known 64:ff9b::/96 (RFC 6052) in
+  // their last 32 bits, 6to4's 2002::/16 (RFC 3056) in the 32 after its first 16. NAT64's local-use
+  // 64:ff9b:1::/48 (RFC 8215) is refused whole: it is not globally reachable, and where it carries
+  // the IPv4 address depends on how the network cut it.
   const first = g[0]!;
+  const isTranslated = g.slice(0, 4).every((h) => h === 0) && g[4] === 0xffff && g[5] === 0;
+  if (isTranslated) return carriedIpv4IsPrivate(g[6]!, g[7]!);
+  if (first === 0x64 && g[1] === 0xff9b) {
+    if (g[2] === 1) return true;
+    if (g.slice(2, 6).every((h) => h === 0)) return carriedIpv4IsPrivate(g[6]!, g[7]!);
+  }
+  if (first === 0x2002) return carriedIpv4IsPrivate(g[1]!, g[2]!);
+
   if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
   if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 link local
   if ((first & 0xff00) === 0xff00) return true; // ff00::/8 multicast

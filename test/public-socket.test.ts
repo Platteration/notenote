@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
-import { assertPublicUrl, publicSocketLookup } from "@/lib/net-guard";
+import { assertPublicUrl, BlockedHostError, publicSocketLookup } from "@/lib/net-guard";
 import { publicRequest } from "@/lib/public-request";
 import { getJson, MAX_RESPONSE_BYTES, ProviderResponseTooLargeError } from "@/lib/providers/http";
 
@@ -50,6 +50,45 @@ describe("outbound socket DNS", () => {
     expect(await response.json()).toEqual({});
     expect(answers).toBe(1);
     expect(host).toBe(`does-not-resolve.invalid:${port}`);
+  });
+
+  it("answers only addresses of the family the socket asks for", async () => {
+    const v4 = { address: "93.184.216.34", family: 4 };
+    const v6 = { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 };
+    const ask = (answers: Array<{ address: string; family: number }>, options: { family?: number; all?: boolean }) =>
+      new Promise((resolve, reject) =>
+        publicSocketLookup(async () => answers)("host.invalid", options, (err, address, family) =>
+          err ? reject(err) : resolve(options.all ? address : { address, family })));
+    // The v4 answer first, so a lookup that ignored the family would hand it to a v6 socket.
+    await expect(ask([v4, v6], { family: 6 })).resolves.toEqual(v6);
+    await expect(ask([v6, v4], { family: 4, all: true })).resolves.toEqual([v4]);
+    await expect(ask([v4, v6], {})).resolves.toEqual(v4);
+    await expect(ask([v4], { family: 6 })).rejects.toThrow(/no address matched the requested family/);
+  });
+
+  it("refuses a private address literal at the first hop, with no check of the caller's in front", async () => {
+    // A literal never reaches the socket's lookup, so getJson checks it itself; every provider
+    // calls it with an address that is either hard-coded or checked, but getJson does not lean on that.
+    let hits = 0;
+    const port = await serve((_req, res) => { hits++; res.end("{}"); });
+    const err = await getJson("Test", `http://127.0.0.1:${port}/`).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BlockedHostError);
+    expect(hits).toBe(0);
+  });
+
+  it("sends the target's own Host and asks for an uncompressed reply, whatever the caller set (hygiene)", async () => {
+    // Not a defence against anything a user controls: no caller passes either header today. It
+    // keeps the request what the URL says, and the reply countable as it arrives.
+    process.env.ALLOW_PRIVATE_PROVIDER_HOSTS = "1";
+    let seen: http.IncomingHttpHeaders = {};
+    const port = await serve((req, res) => { seen = req.headers; res.end("{}"); });
+    await publicRequest(
+      `http://127.0.0.1:${port}/`,
+      { headers: { Host: "elsewhere.example", "Accept-Encoding": "gzip, br" } },
+      publicSocketLookup(),
+    );
+    expect(seen.host).toBe(`127.0.0.1:${port}`);
+    expect(seen["accept-encoding"]).toBe("identity");
   });
 
   it("cancels an aborted request and rejects rather than leaving an open socket", async () => {

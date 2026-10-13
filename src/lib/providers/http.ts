@@ -130,7 +130,10 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       assertPublicUrl(target);
       res = await publicRequest(target, { ...init, method, headers, body, redirect: "manual", signal }, publicSocketLookup());
     } catch (err) {
-      // fetch reports both an abort and a network failure by throwing; only the first is a timeout.
+      // A network failure and the deadline both arrive as a throw; only the second is a timeout.
+      // http.request reports an aborted signal as an AbortError (its cause the signal's
+      // TimeoutError), and a signal already spent before the request starts throws the
+      // TimeoutError itself, from `throwIfAborted`.
       if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
         throw new ProviderTimeoutError(provider, timeout);
       }

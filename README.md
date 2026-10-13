@@ -107,8 +107,12 @@ reserved addresses, in either IP family.
 
 The guard parses IPv6 rather than pattern-matching it, because the URL parser rewrites
 `::ffff:127.0.0.1` as `::ffff:7f00:1`; a regex looking for a dotted quad lets that straight
-through. It runs before every request to that host, not only when the connection is made, so a
-name that resolved publicly at connect time cannot be repointed later.
+through. An IPv4 address that a translator or a tunnel carries inside IPv6 is judged as that IPv4
+address: NAT64's `64:ff9b::/96`, SIIT's `::ffff:0:0/96` and 6to4's `2002::/16`, since on an
+IPv6-only network a NAT64 gateway translates `64:ff9b::a9fe:a9fe` to `169.254.169.254` unless it
+was set up to refuse private destinations. NAT64's local-use `64:ff9b:1::/48` is refused whole.
+The guard runs before every request to that host, not only when the connection is made, so a name
+that resolved publicly at connect time cannot be repointed later.
 
 Checking the host that was typed is not enough on its own, because a redirect is a new
 destination. `getJson` therefore follows redirects by hand (`src/lib/providers/http.ts`)
@@ -132,7 +136,8 @@ connection was TLS, which refused it at the certificate but only after opening i
 address and port the host picked, and a refusal of redirects to plain http, where nothing is
 verified and a rebinding name behind one put a GET of the host's choosing on an internal
 service. That refusal is gone: a redirect to plain http is followed again, its address checked
-like any other. `test/rebinding.test.ts` stages both cases and shows no connection is opened.
+like any other. `test/rebinding.test.ts` stages both cases and shows no connection is opened, and
+`test/push-delivery.test.ts` does the same for a push endpoint.
 And `ALLOW_PRIVATE_PROVIDER_HOSTS=1` turns the guard off for operators deliberately running a
 PDS on their own network — off by default, because the safe choice shouldn't require reading
 the documentation.
@@ -473,6 +478,16 @@ headers are both enforced, so the stricter of each pair wins and a looser copy c
 while a stricter one breaks what this one was measured to allow). `X-Powered-By` is off
 (`poweredByHeader: false` in `next.config.ts`).
 
+Two kinds of request never reach the proxy, so their answers carry none of these headers. A
+`TRACE` is answered 500 by Next itself, which cannot build the fetch `Request` the proxy is handed
+for a method fetch forbids, and logs a `TypeError` for each one; nothing of the request is echoed
+back. Whatever Node's HTTP parser refuses (a method it does not know, such as `TRACK`, or a
+malformed request line or header) is answered 400 and closed, and a `CONNECT` is closed unanswered.
+No page can send any of these: fetch forbids the three methods and cannot write a malformed
+request. Next's image optimizer, which answered `/_next/image` under a policy and a cache lifetime
+of its own, is off (`images.unoptimized` in `next.config.ts`); the app has no `next/image`, and
+that address is a 404 like any other. `scripts/smoke.sh` checks both of those last two points.
+
 Run it on an origin of its own — a domain or a subdomain, not a path under another site: the
 session cookie is `path=/`, the service worker's scope is `/`, and `'self'` in the policy is the
 whole origin, so anything else served from that origin is inside all three.
@@ -605,6 +620,14 @@ everyone a private bucket per request, and falling back to a shared constant giv
 unauthenticated stranger a deployment-wide sign-in lockout for twenty wrong passwords. Set
 `TRUSTED_PROXY_HOPS=1` behind a single nginx or Caddy that appends to the header, and the
 per-address limits come back.
+
+The limiter's memory is bounded where its keys are the caller's to choose. Each limit keyed on an
+address or an account name keeps at most 10,000 buckets, and past that forgets the least recently
+used one of its own kind. The deployment-wide sign-up ceiling and the limits on a signed-in account
+(current-password guesses, app-password connections) are never forgotten before their window ends.
+When every limit shared one capped map, 10,000 sign-ins from fresh addresses, needing no password
+check at all behind a proxy, pushed the sign-up ceiling out, and the next sign-up was accepted
+inside the window that ceiling had closed.
 
 Every state-changing route refuses a request a browser made from another site
 (`assertSameSite` in `src/lib/api.ts`): `Sec-Fetch-Site` decides when it is present, and an
@@ -747,7 +770,12 @@ the second destination in the app a user picks; it goes through the same network
 Bluesky PDS, so `https://10.0.0.5:8443/admin` cannot be registered and knocked on daily — and,
 like the PDS, it is checked again before every send and not only when it was registered, because
 a name that resolved publicly at registration can be pointed at an internal address afterwards
-and the notify job runs every minute. And a
+and the notify job runs every minute. Each delivery has ten seconds from the connection's lookup
+to the status line, a deadline rather than an idle timeout, and the reply is never read
+(`src/lib/push.ts`): the endpoint answers whatever its owner chooses, and web-push's own sender
+read every byte of it into memory under a socket timeout that a server sending a byte at a time
+never trips, so one endpoint could hold the notify job, and every user after it, for as long as it
+kept sending. And a
 subscription belongs to the account that registered it: the endpoint is the primary key across
 all users, and the upsert used to reassign it, so anyone who learned someone else's endpoint
 could take the row over — the victim silently stopped receiving their own notification while the

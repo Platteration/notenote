@@ -172,6 +172,18 @@ case "$BASE" in
   https://*) [ -n "$hsts" ] || fail "an https deployment sent no Strict-Transport-Security" ;;
   *) [ -z "$hsts" ] || fail "HSTS was announced over plain http (a build-time value, or APP_BASE_URL disagrees with $BASE)" ;;
 esac
+# Next's image optimizer answered with a policy and a cache lifetime of its own. It is off
+# (next.config.ts), so its address is a 404 like any other the app does not serve.
+code="$(curl -sS -D "$BODY" -o /dev/null -w '%{http_code}' "$BASE/_next/image?url=%2Ficons%2Ficon-192.png&w=64&q=75")"
+[ "$code" = "404" ] || fail "/_next/image answered $code"
+hdrs="$(cat "$BODY")"
+case "$hdrs" in *"frame-ancestors 'none'"*) ;; *) fail "/_next/image answered without the app's Content-Security-Policy" ;; esac
+case "$hdrs" in *nosniff*) ;; *) fail "/_next/image answered without X-Content-Type-Options" ;; esac
+# A TRACE never reaches the proxy (README, "The website: headers and hosting"), so it carries none
+# of the headers; what matters is that nothing answers it by echoing the request back, cookies and
+# all.
+curl -sS -X TRACE -o "$BODY" -H 'Cookie: smoke-trace=echo-me' "$BASE/" || true
+! grep -q 'echo-me' "$BODY" || fail "a TRACE request was echoed back"
 
 echo "-> the repository's own files are not part of the site"
 # The server answers its routes and public/, nothing else: not the sources, the configuration,
