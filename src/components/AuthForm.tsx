@@ -14,17 +14,22 @@ export function AuthForm() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
   // A Google sign-in that came back without one says why, once: the word is read here and the
-  // address put back below, so a reload says nothing.
-  const [error, setError] = useState<string | null>(() => signInNotice(params.get("signin")));
+  // address put back below, so a reload says nothing. It is said only where /api/config says
+  // sign in with Google is on: anywhere else no sign-in sent it, and anyone can write a link
+  // that puts a Google message on a deployment that has none.
+  const [signin, setSignin] = useState(() => params.get("signin"));
   const [busy, setBusy] = useState(false);
   const site = useSiteConfig();
   useForgetParam("signin", params.has("signin"));
+  const shown = error ?? (site?.google ? signInNotice(signin) : null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setSignin(null);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     try {
     await requestJson(mode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
@@ -75,7 +80,7 @@ export function AuthForm() {
           />
           {mode === "signup" && <span className="hint">At least 8 characters. Your timezone is detected automatically.</span>}
         </div>
-        {error && <p className="error">{error}</p>}
+        {shown && <p className="error">{shown}</p>}
         <button className="btn btn-primary btn-block" disabled={busy} type="submit">
           {busy ? "One moment…" : mode === "signup" ? "Start my Daily Scroll" : "Sign in"}
         </button>

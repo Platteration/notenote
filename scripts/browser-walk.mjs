@@ -189,13 +189,30 @@ try {
     else if (features.allowed.includes(feature) !== (allowlist !== "()")) problem(`Permissions-Policy says ${entry}, but the page has ${feature} ${features.allowed.includes(feature) ? "on" : "off"}`);
   }
 
-  step("sign up through the form");
+  step("with no keys, a Google notice someone wrote into a link is not said, and the word is taken out of the address");
+  {
+    const asked = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/config");
+    await page.goto("/?signin=exists");
+    await asked;
+    await page.waitForTimeout(500);
+    const said = await page.locator("p.error").allTextContents();
+    if (said.length) fail(`/?signin=exists said ${JSON.stringify(said)} on a deployment with no Google sign-in`);
+    if (new URL(page.url()).search) fail(`the address kept ${page.url()}`);
+  }
+
+  step("sign up through the form, from a link whose ?next= resolves to //evil.example");
+  // `/.//evil.example/` keeps this origin when resolved, to the path `//evil.example/`, which the
+  // router reads as another host. evil.example is answered here, so a regression lands somewhere
+  // the walk can see (and the request watcher reports it) rather than on the real one.
+  await context.route((url) => url.hostname === "evil.example", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<h1>Not the site</h1>" }));
+  await page.goto("/?next=/.//evil.example/");
   const email = `walk-${Date.now()}@example.com`;
   await page.getByLabel("Display name").fill("Browser Walk");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("walk-password-123");
   await page.getByRole("button", { name: "Start my Daily Scroll" }).click();
-  await page.waitForURL("**/connect");
+  await page.waitForURL((url) => url.origin !== ORIGIN || url.pathname === "/connect");
+  if (new URL(page.url()).origin !== ORIGIN) fail(`signing up followed ?next= off the site, to ${page.url()}`);
 
   step("connect two platforms in demo mode");
   for (const name of ["YouTube", "Reddit"]) {
@@ -235,13 +252,31 @@ try {
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByRole("button", { name: /^Walked · / }).waitFor();
 
-  step("change the theme and accent, and register the notification worker");
-  await page.goto("/settings");
-  await page.waitForTimeout(500);
-  for (const name of ["Link Google", "Buy"]) {
-    if (await page.getByRole("button", { name, exact: false }).count()) fail(`Settings drew ${name} with nothing configured`);
+  step("with no keys, Settings draws no Google or shop control, and back from a Checkout it never offered asks nothing");
+  {
+    // Counted only once /api/config has answered: before it, nothing is drawn whatever the
+    // gating does, and a fixed wait would let a slow answer pass the check vacuously.
+    const asked = [];
+    const countMe = (req) => {
+      if (new URL(req.url()).pathname === "/api/auth/me") asked.push(req.url());
+    };
+    page.on("request", countMe);
+    const configAnswered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/config");
+    await page.goto("/settings?purchase=success");
+    await configAnswered;
+    await page.waitForTimeout(500);
+    for (const name of ["Link Google", "Buy"]) {
+      if (await page.getByRole("button", { name, exact: false }).count()) fail(`Settings drew ${name} with nothing configured`);
+    }
+    if (await page.getByRole("heading", { name: "Support this app" }).count()) fail("Settings drew Support this app with nothing configured");
+    // Nothing else on the page asks /api/auth/me: the Support card's poll after a payment is the
+    // only caller, and with no product listed there was no payment to confirm.
+    page.off("request", countMe);
+    if (asked.length) fail(`/settings?purchase=success asked /api/auth/me ${asked.length} time(s) with no shop`);
+    if (new URL(page.url()).search) fail(`the address kept ${page.url()}`);
   }
-  if (await page.getByRole("heading", { name: "Support this app" }).count()) fail("Settings drew Support this app with nothing configured");
+
+  step("change the theme and accent, and register the notification worker");
   // Each choice is saved before the next is taken, so wait for one to land before the other.
   await page.getByRole("group", { name: "Theme" }).getByRole("button", { name: "Light", exact: true }).click();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light");

@@ -32,13 +32,15 @@ export function SupportCard({ supporter }: { supporter: boolean }) {
     purchase === "success" ? { kind: "wait", text: "Confirming your payment with Stripe…" } : null,
   );
   const product = site?.products.find((p) => p.id === PRODUCT) ?? null;
+  const listed = product !== null;
 
   useForgetParam("purchase", purchase !== null);
 
   // Cancelled: nothing is said. Paid: ask until the webhook has recorded it, up to five times
-  // over fifteen seconds.
+  // over fifteen seconds, and only once /api/config has listed the product: anywhere else no
+  // Checkout sent the browser here, nothing is drawn, and nothing is asked.
   useEffect(() => {
-    if (purchase !== "success") return;
+    if (purchase !== "success" || !listed) return;
     let live = true;
     void (async () => {
       for (let attempt = 0; attempt < POLLS && live; attempt++) {
@@ -48,8 +50,8 @@ export function SupportCard({ supporter }: { supporter: boolean }) {
           const me = await requestJson<{ entitlements?: unknown }>("/api/auth/me");
           if (Array.isArray(me.entitlements) && me.entitlements.includes(ENTITLEMENT)) {
             setOwned(true);
-            const listed = (await loadSiteConfig()).products.find((p) => p.id === PRODUCT);
-            setMessage({ kind: "ok", text: thanks(listed?.name ?? "Support this app") });
+            const named = (await loadSiteConfig()).products.find((p) => p.id === PRODUCT);
+            setMessage({ kind: "ok", text: thanks(named?.name ?? "Support this app") });
             // The badge in the navigation is drawn by the server.
             router.refresh();
             return;
@@ -63,7 +65,7 @@ export function SupportCard({ supporter }: { supporter: boolean }) {
     return () => {
       live = false;
     };
-  }, [purchase, router]);
+  }, [purchase, listed, router]);
 
   async function buy() {
     if (!product) return;
@@ -100,8 +102,9 @@ export function SupportCard({ supporter }: { supporter: boolean }) {
       {owned && !message && <p className="hint" style={{ marginTop: 10 }}>Thank you for supporting The Daily Scroll.</p>}
       {message && <p className={message.kind === "err" ? "error" : message.kind === "ok" ? "success" : "hint"} role="status">{message.text}</p>}
       <p className="hint" style={{ marginTop: 10 }}>
-        Paid on Stripe&apos;s own page; this site never sees your card. Stripe tells this server the payment went through, and it keeps
-        what was bought and Stripe&apos;s customer id with your account.
+        Paid on Stripe&apos;s own page; this site never sees your card. Stripe is told your account id here and tells this server when
+        the payment has gone through; this server keeps what was bought, the payment&apos;s id and Stripe&apos;s customer id with your
+        account.
       </p>
     </div>
   );

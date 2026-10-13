@@ -11,6 +11,13 @@
  * So the test is the real one: resolve it against this origin and insist the origin survived.
  * The parsed path is what gets returned, so the value used is the value that was checked —
  * characters the parser strips (tab, newline) cannot reappear afterwards.
+ *
+ * That returned path is read a second time, by the router, as an address relative to the page,
+ * so it must not start with two slashes either. Dot segments get there without starting with
+ * them: `/.//evil.example`, `/x/..//evil.example` and `/%2e//evil.example` all keep this origin
+ * when resolved, to the path `//evil.example`, which `router.push` then took for another host
+ * (a sign-up from `/?next=/.//evil.example/` landed on `http://evil.example/`). `returnPath` in
+ * `src/lib/integrations/google.ts` refuses the same thing for the Google flow.
  */
 export function safeNextPath(value: string | null | undefined, fallback: string): string {
   if (!value || !value.startsWith("/")) return fallback;
@@ -23,6 +30,6 @@ export function safeNextPath(value: string | null | undefined, fallback: string)
   } catch {
     return fallback;
   }
-  if (url.origin !== origin) return fallback;
+  if (url.origin !== origin || url.pathname.startsWith("//")) return fallback;
   return `${url.pathname}${url.search}${url.hash}`;
 }

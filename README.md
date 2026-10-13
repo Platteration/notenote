@@ -377,7 +377,10 @@ its email address:
   password and link Google from Settings. This app sends no email, so an address typed into
   the sign-up form proves nothing about who owns it; joining the two by address would hand an
   account to whoever registered the address first (a pre-account-takeover), in either
-  direction.
+  direction. The same rule has a cost: anyone can sign up with a person's address and a
+  password first, and that person's Google sign-up is then refused for as long as that account
+  exists, with a notice telling them to sign in with a password they never set. The address
+  stays taken until that account is deleted, which inside the app only whoever made it can do.
 - A password account links Google from Settings, signed in: the link is made only if the
   browser Google sends back is still signed in to the account that asked. One Google account
   per account, and one account per Google account.
@@ -389,7 +392,8 @@ nothing to the database; the state check at the callback is what stops a login C
 ends in a new `ds_session` cookie, as a password one does, and the one the browser held before
 ends. Every failure goes back to the page with a word of the app's own (`?signin=failed`,
 `?link=taken`, …), never anything Google said, and the page says it once and takes it out of
-the address.
+the address. It is said only where `/api/config` says sign in with Google is on: anyone can
+write the word into a link, and a deployment without Google takes it out and says nothing.
 
 **Support this app.** Buy asks `POST /api/checkout`, which creates a Stripe Checkout Session
 (the account id in `client_reference_id` and the metadata, an hour to pay, a fresh idempotency
@@ -404,14 +408,16 @@ changes nothing; a database failure is a 500, which Stripe retries. A paid
 `supporter` to the account its metadata names, if that account still exists; a full refund or a
 dispute takes it back, and one that arrives before the purchase is remembered so the purchase
 grants nothing. After Checkout the page asks `/api/auth/me` up to five times over fifteen
-seconds and thanks the visitor when the webhook has landed. A test-mode purchase is never read
-under a live key. Ten checkouts an hour per account.
+seconds and thanks the visitor when the webhook has landed; it asks only once `/api/config`
+lists the product, so `?purchase=success` on a deployment without the shop asks nothing. A
+test-mode purchase is never read under a live key. Ten checkouts an hour per account.
 
 What leaves the server, only when a feature is on and only if the visitor uses it: Google tells
-it the Google account's id and verified address; Stripe handles the payment. The server keeps
-the account id, what was bought, the payment's id and Stripe's customer id. The About card says
-so in a deployment that has the feature on, and nothing about either where it is off. Export
-includes the Google link and the purchase; Delete removes both (the payment itself stays with
+it the Google account's id and verified address; Stripe handles the payment and is told the
+account id, which it keeps with the payment. The server keeps the account id, what was bought,
+the payment's id and Stripe's customer id. The About card says so in a deployment that has the
+feature on, and nothing about either where it is off. Export includes the Google link and the
+purchase; Delete removes both (the payment itself, and the account id with it, stays with
 Stripe) and the confirmation says the badge goes with the account.
 
 The badge is a thank-you, not a lock on anything: every feature stays the same for everyone.
@@ -552,7 +558,9 @@ port with a database of its own, waits for `/api/health`, runs `scripts/smoke.sh
 server log if anything failed. Run either script directly, with `BASE` set, when you already
 have a server up and want to walk that one. That server has no keys, as a deployment with none
 has not, and both walks check that `/api/config` says so and that no page draws a Google or Buy
-control.
+control. The browser walk counts the controls only once `/api/config` has answered, and also
+checks that a sign-up from `/?next=/.//evil.example/` lands on `/connect`, that
+`/?signin=exists` says nothing, and that `/settings?purchase=success` never asks `/api/auth/me`.
 
 Then it starts a second server from the same build, with sign in with Google and the shop
 turned on (test credentials from `scripts/e2e-fakes.mjs`) and a fake Google and a fake Stripe
@@ -565,9 +573,10 @@ failures as the browser walk: the controls hidden when `/api/config` answers 404
 Google; Support this app through a stand-in for Stripe's Checkout page, back before the webhook,
 the signed webhook, the thank-you and the badge; a replayed and an unsigned webhook; a password
 account linking Google and signing in with it; a Google account whose address an unlinked
-account holds signing in to nothing; a callback nobody started; deleting the account. Google's
-consent page and Stripe's Checkout are reached by navigation and stood in for with `page.route`,
-and they are the only places a request may leave the site for.
+account holds signing in to nothing (the notice drawn once `/api/config` has said Google is
+on); a callback nobody started; deleting the account. Google's consent page and Stripe's
+Checkout are reached by navigation and stood in for with `page.route`, and they are the only
+places a request may leave the site for.
 
 One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
 conventions, build, the Chromium install and then `npm run test:e2e`, each as its own step) and an `audit` job, which

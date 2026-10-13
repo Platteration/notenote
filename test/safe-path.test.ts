@@ -24,6 +24,22 @@ describe("post-sign-in redirect target", () => {
     }
   });
 
+  it("refuses a path that keeps this origin but resolves to one starting with two slashes", () => {
+    // Dot segments (literal or percent-encoded) and a backslash collapse into `//` only once
+    // resolved, so the leading-slash test never sees them and the origin survives. What comes
+    // back is read again by the router as an address relative to the page, and `//evil.example`
+    // read that way is another host: each of these sent a sign-up to http://evil.example/.
+    for (const hostile of ["/.//evil.example", "/.//evil.example/", "/x/..//evil.example", "/%2e//evil.example", "/..//evil.example", "/x/..\\/evil.example"]) {
+      const resolved = new URL(hostile, "https://scroll.example");
+      expect(resolved.origin).toBe("https://scroll.example");
+      expect(new URL(resolved.pathname, "https://scroll.example").origin).not.toBe("https://scroll.example");
+      expect(safeNextPath(hostile, "/fallback")).toBe("/fallback");
+    }
+    // A doubled slash later in the path is still a path on this site.
+    expect(safeNextPath("/saved//archive", "/fallback")).toBe("/saved//archive");
+    expect(safeNextPath("/x/../feed", "/fallback")).toBe("/feed");
+  });
+
   it("refuses anything that is not a path on this site", () => {
     expect(safeNextPath("https://evil.example/", "/fallback")).toBe("/fallback");
     expect(safeNextPath("javascript:alert(1)", "/fallback")).toBe("/fallback");

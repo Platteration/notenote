@@ -44,4 +44,15 @@ describe("what the About card says leaves this server", () => {
     expect(text).not.toContain(GOOGLE_PRIVACY);
     expect(about({ ...SIGN_IN, ...SHOP })).toContain(`${GOOGLE_PRIVACY} ${STRIPE_PRIVACY}`);
   });
+
+  it("says what goes to Stripe and stays there, not only what this server keeps", () => {
+    // Pinned as written. The Checkout Session carries the account id (client_reference_id and
+    // the metadata, copied onto the PaymentIntent), and the server keeps the payment intent id
+    // in purchases.ref, which Export shows; the card's "Delete removes it at once" is true of
+    // this server only, so the sentence says what Delete leaves with Stripe.
+    expect(STRIPE_PRIVACY).toBe(
+      "If you support the app, Stripe handles the payment on its own page and is told your account id here; this server keeps what was bought, the payment's id and Stripe's customer id, never your card. Delete does not remove the payment, or the account id with it, from Stripe.",
+    );
+    expect(about(SHOP)).toContain("Stripe handles the payment on its own page and is told your account id here");
+  });
 });

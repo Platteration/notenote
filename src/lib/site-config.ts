@@ -162,4 +162,4 @@ export function linkNotice(word: string | null): { kind: "ok" | "err"; text: str
 export const GOOGLE_PRIVACY =
   "If you sign in with Google, Google tells this server your Google account's id and email address, which it keeps with your account.";
 export const STRIPE_PRIVACY =
-  "If you support the app, Stripe handles the payment on its own page; this server keeps what was bought and Stripe's customer id, never your card.";
+  "If you support the app, Stripe handles the payment on its own page and is told your account id here; this server keeps what was bought, the payment's id and Stripe's customer id, never your card. Delete does not remove the payment, or the account id with it, from Stripe.";

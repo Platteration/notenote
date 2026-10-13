@@ -97,4 +97,6 @@ instance whose way out is the global `fetch`.
   so the callback and every `/api/` request reach the server (`test/integrations-config.test.ts`).
 - A query word the page reads once (`?signin=`, `?link=`, `?purchase=`) is taken out of the
   address by `useForgetParam`, which waits a task so that the app router has patched
-  `history.replaceState`; unpatched, the router's next refresh put the word back.
+  `history.replaceState`; unpatched, the router's next refresh put the word back. It is taken
+  out everywhere but acted on (a notice drawn, `/api/auth/me` polled) only once `/api/config`
+  says its feature is on: anyone can write the word into a link.
