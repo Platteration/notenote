@@ -22,6 +22,14 @@ node -e '
   if (keys !== "ok,version") throw new Error("health answered more than ok and version: " + keys);
 ' "$health"
 
+echo "-> with no keys, sign in with Google and the shop are not there"
+config="$(curl -sS "$BASE/api/config")"
+[ "$config" = '{"auth":{"google":false},"shop":{"products":[]}}' ] || fail "api/config said something is configured: $config"
+for route in "GET /api/auth/google/start" "GET /api/auth/google/callback?code=x&state=y" "POST /api/webhooks/stripe"; do
+  set -- $route
+  [ "$(curl -sS -o /dev/null -w '%{http_code}' -X "$1" "$BASE$2")" = "404" ] || fail "$route answered, with nothing configured"
+done
+
 echo "-> the feed is private"
 [ "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/feed")" = "401" ] || fail "feed was readable without signing in"
 

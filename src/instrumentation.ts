@@ -92,6 +92,15 @@ export async function register(): Promise<void> {
     }
   }
 
+  /**
+   * Sign in with Google and the shop are off until every variable each needs is present and
+   * well formed. One that is half set says which variables are missing or malformed, by name
+   * only, and the feature stays off rather than failing on a visitor's first click.
+   */
+  const { readIntegrationConfig } = await import("./lib/integrations/config");
+  const integration = readIntegrationConfig(process.env);
+  if (integration.warning) console.warn(integration.warning);
+
   if (warnings.length > 0) {
     console.warn(["The Daily Scroll is running with an insecure configuration:", ...warnings.map((w) => `  - ${w}`)].join("\n"));
   }

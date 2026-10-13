@@ -53,3 +53,48 @@ allowed (`style-src-attr 'unsafe-inline'`) but `<style>` elements are not, which
 has its own `not-found.tsx`. Trusted Types was measured and breaks the framework's chunk loader.
 `public/guard.js` is the safety net for a page whose scripts fail or throw before `Started`
 reports in; `public/.well-known/security.txt` has an `Expires` that a test fails on once it lapses.
+
+## Sign in with Google and the shop
+
+Both are off until the operator sets their variables (README, "Sign in with Google and Support
+this app"); with none set `/api/config` says so, every route below 404s and no page draws a
+Google or Buy control. The shared kit sits at `server/kit/`, byte for byte the canonical copy:
+never edit it (a change goes to the canonical copy and is copied everywhere). `npm test` runs
+its self-test (`node --test server/kit/selftest.mjs`) before vitest, ESLint lints it under this
+repository's configuration unchanged, and `npm run typecheck` checks its JavaScript under every
+option of `tsconfig.json` through `tsconfig.kit.json` (allowJs and checkJs, which the app's own
+config leaves off); the app imports it through the `.d.ts` files beside each module. This app
+uses the kit's `google.js`, `stripe.js`, `crypto.js` and `http.js` from inside its own stack and
+keeps its own accounts, sessions and database; the kit's `app.js`, `node.js` and `cloudflare.js`
+are for apps with no server and are not run here (the catalogue test reads `validateCatalogue`
+from `app.js`). The catalogue is `server/catalogue.ts`, in TypeScript because `allowJs` is off.
+`src/lib/integrations/` is the configuration (`config.ts`), the Google flow (`google.ts`) and the
+shop (`shop.ts`), put together by `createIntegrations({ env, fetch })`; the routes use one
+instance whose way out is the global `fetch`.
+
+- **A Google account is its `sub`, never its email.** `src/lib/google-accounts.ts`: a linked
+  `sub` signs in to its account; a new one makes an account with no password (`NO_PASSWORD` in
+  `auth.ts`, which `signIn` meets with the decoy hash so it costs what any wrong password does);
+  an address an unlinked account already holds makes and links nothing (`?signin=exists`).
+  Linking happens only from Settings, and the callback checks the browser is still signed in to
+  the account that started it. Do not add a link by matching addresses: this app sends no email,
+  so an address typed at sign-up proves nothing.
+- **The flow's state is a signed cookie, not a row.** `__Host-notenote-oauth`, ten minutes,
+  signed with SESSION_SECRET; starting a sign-in writes nothing to the database. The callback
+  ends in `createSession`, after `destroySession`, as a password sign-in would.
+- **Only the webhook grants.** `purchases` is written by `/api/webhooks/stripe` alone, after the
+  signature and the mode check, and `stripe_events` makes each event apply once, in the same
+  transaction. A purchase is per Stripe mode; `records` (the key's mode, live when none) is the
+  one read, also for the nav badge, so a badge earned stays drawn if the shop is turned off.
+- **No variable points the app at another Google or Stripe.** Unit tests hand fakes to
+  `createIntegrations({ fetch })` or replace the global fetch (`test/helpers/fake-upstreams.ts`);
+  the end-to-end run loads `scripts/e2e-upstreams.mjs` into its second server's process with
+  `node --import`. Playwright does not route a request a redirect makes, which is why
+  `scripts/integrations-walk.mjs` answers the sign-in start's 302 to Google as a Refresh.
+- Every response here, the new routes' too, carries the site's headers from `src/proxy.ts`; the
+  kit's own API headers are not used. `connect-src 'self'` already covered the API: Google and
+  Checkout are navigations, and the policy did not change. `public/sw.js` has no fetch handler,
+  so the callback and every `/api/` request reach the server (`test/integrations-config.test.ts`).
+- A query word the page reads once (`?signin=`, `?link=`, `?purchase=`) is taken out of the
+  address by `useForgetParam`, which waits a task so that the app router has patched
+  `history.replaceState`; unpatched, the router's next refresh put the word back.

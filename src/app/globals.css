@@ -410,6 +410,11 @@ input, select, textarea { font: inherit; }
 .cred-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .cred-form .field { margin-bottom: 10px; }
 .cred-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* Sign in with Google under the form, and Settings' Google and support rows: drawn only when the
+   deployment has turned them on (src/lib/site-config.ts). */
+.auth-alt { display: grid; gap: 8px; margin-top: 14px; }
+.account-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.nav-badge { align-self: center; }
 .provider-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .link-muted { color: var(--fg-faint); font-size: 12px; text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; }
 

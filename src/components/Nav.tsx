@@ -14,9 +14,10 @@ const LINKS = [
 
 /**
  * `email` is shown, not just the display name, because which account you are in is the one
- * thing a sign-in CSRF would change without you noticing.
+ * thing a sign-in CSRF would change without you noticing. `supporter` puts the supporter badge
+ * beside it, for an account whose "Support this app" payment Stripe's webhook has recorded.
  */
-export function Nav({ signedIn, email }: { signedIn: boolean; email?: string }) {
+export function Nav({ signedIn, email, supporter = false }: { signedIn: boolean; email?: string; supporter?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +45,11 @@ export function Nav({ signedIn, email }: { signedIn: boolean; email?: string }) 
           {email && (
             <span className="nav-account" title={`Signed in as ${email}`}>
               {email}
+            </span>
+          )}
+          {supporter && (
+            <span className="badge badge-live nav-badge" title="Supporter: thank you for supporting The Daily Scroll">
+              Supporter
             </span>
           )}
           {LINKS.map((l) => (

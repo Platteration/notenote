@@ -170,9 +170,16 @@ try {
   watch(page, "app");
 
   step("the landing page loads under the policy");
+  const configAsked = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/config");
   const landing = await page.goto("/");
   if (landing?.status() !== 200) fail(`/ answered ${landing?.status()}`);
   await page.getByRole("heading", { level: 1 }).waitFor();
+
+  step("with no keys, the page asks /api/config once and draws no Google or shop control");
+  const config = await (await configAsked).json();
+  if (JSON.stringify(config) !== '{"auth":{"google":false},"shop":{"products":[]}}') fail(`/api/config said ${JSON.stringify(config)}`);
+  await page.waitForTimeout(500);
+  if (await page.getByRole("link", { name: "Sign in with Google" }).count()) fail("Sign in with Google was drawn with nothing configured");
 
   step("every feature the Permissions-Policy names is one Chromium knows, and only autoplay is left on");
   const features = await page.evaluate(() => ({ known: document.featurePolicy.features(), allowed: document.featurePolicy.allowedFeatures() }));
@@ -230,6 +237,11 @@ try {
 
   step("change the theme and accent, and register the notification worker");
   await page.goto("/settings");
+  await page.waitForTimeout(500);
+  for (const name of ["Link Google", "Buy"]) {
+    if (await page.getByRole("button", { name, exact: false }).count()) fail(`Settings drew ${name} with nothing configured`);
+  }
+  if (await page.getByRole("heading", { name: "Support this app" }).count()) fail("Settings drew Support this app with nothing configured");
   // Each choice is saved before the next is taken, so wait for one to land before the other.
   await page.getByRole("group", { name: "Theme" }).getByRole("button", { name: "Light", exact: true }).click();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light");

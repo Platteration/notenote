@@ -49,14 +49,19 @@ export function buildExport(user: UserRow) {
     collectionItems: rows<Record<string, unknown>>("SELECT collection_id, item_key, added_at FROM collection_items WHERE user_id = ?"),
     mutedCreators: rows<Record<string, unknown>>("SELECT provider, creator_handle, muted_at FROM muted_creators WHERE user_id = ?"),
     pushSubscriptions: rows<Record<string, unknown>>("SELECT endpoint, created_at, last_open_day FROM push_subscriptions WHERE user_id = ?"),
+    // The Google account that signs in here, if one does, and what was bought through Stripe:
+    // the payment itself, and the card behind it, are Stripe's and not in this file.
+    google: rows<Record<string, unknown>>("SELECT sub, email, linked_at FROM google_identities WHERE user_id = ?"),
+    purchases: rows<Record<string, unknown>>("SELECT mode, ref, product, customer, revoked, recorded_at FROM purchases WHERE user_id = ? ORDER BY recorded_at"),
   };
 }
 
 /**
  * Delete the account and everything attached to it, all or nothing: connections and their
  * tokens, cached items, feeds, visit history, seen history, the archive (saved clips, notes,
- * collections), mutes, push subscriptions, settings and sessions. Every table is named rather
- * than left to cascades, so the list says what goes.
+ * collections), mutes, push subscriptions, settings and sessions, the Google account linked to
+ * it and its supporter purchase (the payment itself stays with Stripe). Every table is named
+ * rather than left to cascades, so the list says what goes.
  */
 export function deleteAccountData(userId: string): void {
   const db = getDb();
@@ -76,6 +81,8 @@ export function deleteAccountData(userId: string): void {
       "push_subscriptions",
       "provider_cache",
       "oauth_states",
+      "google_identities",
+      "purchases",
     ]) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }

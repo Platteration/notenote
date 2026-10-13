@@ -1,0 +1,12 @@
+{
+  "//": "The shared kit (server/kit, byte for byte the canonical copy) is JavaScript with JSDoc types. tsconfig.json leaves JavaScript out (allowJs off), so this checks the kit's own files, the self-test included, under every option of tsconfig.json: strict, noUncheckedIndexedAccess and the rest.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": ["server/kit/*.js", "server/kit/*.mjs"],
+  "exclude": []
+}

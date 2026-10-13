@@ -165,6 +165,38 @@ CREATE TABLE IF NOT EXISTS provider_cache (
   fetched_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, provider)
 );
+-- A Google account that signs in to an account here, keyed by Google's subject identifier and
+-- never by its email address: an account is linked only from a session already signed in to it
+-- (src/lib/google-accounts.ts). The email is Google's verified one, kept to show which Google
+-- account it is. One Google account per account here, and one account per Google account.
+CREATE TABLE IF NOT EXISTS google_identities (
+  sub TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT,
+  linked_at INTEGER NOT NULL
+);
+-- What a Stripe payment bought, written by the signed webhook alone (src/lib/integrations/shop.ts).
+-- One row per payment intent (or, for a free checkout, its session), per Stripe mode, so a
+-- test-mode purchase is never read under a live key. A refund or dispute that arrives before
+-- the purchase leaves a row with no user, revoked, so the late completion grants nothing.
+CREATE TABLE IF NOT EXISTS purchases (
+  mode TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  product TEXT,
+  grants TEXT,
+  customer TEXT,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  recorded_at INTEGER NOT NULL,
+  PRIMARY KEY (mode, ref)
+);
+-- Stripe events already applied, so a retried or replayed delivery changes nothing again.
+CREATE TABLE IF NOT EXISTS stripe_events (
+  id TEXT PRIMARY KEY,
+  mode TEXT NOT NULL,
+  type TEXT NOT NULL,
+  processed_at INTEGER NOT NULL
+);
 `;
 
 declare global {

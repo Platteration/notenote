@@ -346,12 +346,119 @@ attribute. The `tier` field is recorded but not enforced — nothing is gated.
 Then `npm test`: the contrast test checks all five blocks against their scheme's surfaces, and
 the picker and the persisted preference need no change.
 
+## Sign in with Google and Support this app
+
+Two things a deployment can turn on, both off until the operator supplies their keys: **Sign in
+with Google** as a second way into an account, and **Support this app**, a one-time payment
+through Stripe that puts a supporter badge beside the account in the navigation and changes
+nothing else. With no keys (the default) `GET /api/config` answers
+`{"auth":{"google":false},"shop":{"products":[]}}`, every route below answers 404, and no page
+draws a Google or Buy control: the app is what it was. A half-configured feature stays off and
+the server says at start which variables are missing or malformed, by name only.
+
+They are built on the shared kit in `server/kit/` (the same files, byte for byte, in every app
+of the account that carries it; never edited here), from inside this app's own stack: its
+`google.js` (the authorize URL, PKCE, the code exchange and the ID-token check against Google's
+keys), `stripe.js` (prices, Checkout Sessions, the webhook signature and event parsing),
+`crypto.js` and `http.js`. The accounts, sessions and database stay this app's own:
+`src/lib/integrations/` (configuration, the Google flow, the shop), `src/lib/google-accounts.ts`
+(what a Google sign-in does to the accounts), and the routes listed under API. `npm test` runs
+the kit's own self-test first.
+
+**Sign in with Google.** A Google account is known by its subject identifier (`sub`), never by
+its email address:
+
+- A Google account linked to an account here signs in to that account.
+- A Google account not linked to any makes a new account, with Google's verified address as
+  its email and no password (Settings says so and offers no password change). It is charged to
+  the same sign-up ceilings as the form.
+- If an account here already has that address and has not linked this Google account, nothing
+  is made and nothing is linked, and the sign-in page says to sign in with that account's
+  password and link Google from Settings. This app sends no email, so an address typed into
+  the sign-up form proves nothing about who owns it; joining the two by address would hand an
+  account to whoever registered the address first (a pre-account-takeover), in either
+  direction.
+- A password account links Google from Settings, signed in: the link is made only if the
+  browser Google sends back is still signed in to the account that asked. One Google account
+  per account, and one account per Google account.
+
+The flow is OpenID Connect's code flow with PKCE, `scope=openid email`. Its state, nonce,
+verifier and where to land travel in a ten-minute cookie, `__Host-notenote-oauth` (HttpOnly,
+Secure, SameSite=Lax), signed with `SESSION_SECRET`, so a sign-in that has not finished writes
+nothing to the database; the state check at the callback is what stops a login CSRF. A sign-in
+ends in a new `ds_session` cookie, as a password one does, and the one the browser held before
+ends. Every failure goes back to the page with a word of the app's own (`?signin=failed`,
+`?link=taken`, …), never anything Google said, and the page says it once and takes it out of
+the address.
+
+**Support this app.** Buy asks `POST /api/checkout`, which creates a Stripe Checkout Session
+(the account id in `client_reference_id` and the metadata, an hour to pay, a fresh idempotency
+key) and answers its address; the page goes there only if it is `https://checkout.stripe.com/…`.
+The page never loads Stripe.js and this site never sees a card. Nothing is granted by coming
+back: only Stripe's signed webhook (`POST /api/webhooks/stripe`) writes a purchase, after the
+raw body (64 KB at most) has passed the `Stripe-Signature` check (five minutes either way) and
+the event's live or test mode has matched the key's. Each event is applied once
+(`stripe_events`, in the same transaction as what it did), so a retried or replayed delivery
+changes nothing; a database failure is a 500, which Stripe retries. A paid
+`checkout.session.completed` (or `async_payment_succeeded` for a delayed method) grants
+`supporter` to the account its metadata names, if that account still exists; a full refund or a
+dispute takes it back, and one that arrives before the purchase is remembered so the purchase
+grants nothing. After Checkout the page asks `/api/auth/me` up to five times over fifteen
+seconds and thanks the visitor when the webhook has landed. A test-mode purchase is never read
+under a live key. Ten checkouts an hour per account.
+
+What leaves the server, only when a feature is on and only if the visitor uses it: Google tells
+it the Google account's id and verified address; Stripe handles the payment. The server keeps
+the account id, what was bought, the payment's id and Stripe's customer id. The About card says
+so in a deployment that has the feature on, and nothing about either where it is off. Export
+includes the Google link and the purchase; Delete removes both (the payment itself stays with
+Stripe) and the confirmation says the badge goes with the account.
+
+The badge is a thank-you, not a lock on anything: every feature stays the same for everyone.
+
+### Turning them on
+
+| Variable | For | What |
+|---|---|---|
+| `APP_BASE_URL` | both | The public origin, already used for the platforms' redirect URIs: https, or http only on `localhost`/`127.0.0.1`, with no path. Every address the server writes for Google and Stripe comes from it, never from the request. |
+| `SESSION_SECRET` | sign-in | Already required; it also signs the ten-minute sign-in cookie. |
+| `GOOGLE_SIGNIN_CLIENT_ID`, `GOOGLE_SIGNIN_CLIENT_SECRET` | sign-in | A Google OAuth client of type Web application whose authorised redirect URIs include `APP_BASE_URL` + `/api/auth/google/callback`. |
+| `STRIPE_SECRET_KEY` | shop | Preferably a restricted key with Checkout Sessions write, Prices read and Customers write. `sk_test_`/`rk_test_` is test mode. |
+| `STRIPE_WEBHOOK_SECRET` | shop | The signing secret (`whsec_…`) of the endpoint `APP_BASE_URL` + `/api/webhooks/stripe`. |
+| `STRIPE_PRICE_SUPPORTER` | shop | The Price id (`price_…`) of a one-time Price on a "Support this app" product. |
+
+The YouTube connection's client (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) may be the same
+Google client: give it the second redirect URI, `APP_BASE_URL` + `/api/auth/google/callback`
+beside `/api/connect/youtube/callback`, and set the sign-in pair to the same values. They are
+separate variables so that a deployment connecting YouTube does not find a Sign in with Google
+button appear before that redirect URI is registered. Sign-in asks only for `openid email`,
+which needs no verification review; YouTube's `youtube.readonly` does, and on one client the
+consent screen and its review are shared.
+
+In Stripe (test mode first, card `4242 4242 4242 4242`): the product and its one-time price;
+a webhook endpoint at `APP_BASE_URL` + `/api/webhooks/stripe` subscribed to
+`checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+`checkout.session.async_payment_failed`, `charge.refunded` and `charge.dispute.created` (the
+kit's two subscription events are acknowledged and ignored, since nothing here is a
+subscription); the restricted key. Then the same in live mode. The shop does not need Google
+sign-in: every account here, password or Google, can buy.
+
+Records live in the app's own database (`google_identities`, `purchases`, `stripe_events`), so
+there is nothing else to provision: no KV namespace, no second service. Turning sign-in off
+again leaves an account made with Google with no way in (it has no password, and there is no
+way to set one yet).
+
 ## API
 
 | Method | Path                               | Purpose                                              |
 |--------|------------------------------------|------------------------------------------------------|
 | POST   | `/api/auth/signup`, `/login`, `/logout` | Local accounts (scrypt-hashed passwords)        |
-| GET    | `/api/auth/me`                     | Current user                                         |
+| GET    | `/api/auth/me`                     | Current user, and what its purchases grant (`entitlements`) |
+| GET    | `/api/config`                      | Whether sign in with Google and the shop are on, and what is for sale |
+| GET    | `/api/auth/google/start`, `/callback` | Sign in (or up) with Google; 404 while it is off  |
+| POST   | `/api/account/google`              | Start linking Google to the signed-in account        |
+| POST   | `/api/checkout`                    | Start paying for `{ product }`: a Stripe Checkout address |
+| POST   | `/api/webhooks/stripe`             | Stripe's signed webhook: the only thing that grants a purchase |
 | GET    | `/api/health`                      | `{ ok, version }` for a container or uptime check; no session, nothing else |
 | GET    | `/api/connections`                 | Platform connection status                           |
 | GET    | `/api/connect/:provider/start`     | Begin OAuth (or create a demo connection)            |
@@ -384,11 +491,11 @@ npm run dev         # development server
 npm run build       # production build
 npm start           # serve the build
 npm run lint        # eslint (flat config)
-npm run typecheck   # next typegen, then tsc --noEmit
-npm test            # vitest
+npm run typecheck   # next typegen, then tsc --noEmit, then the shared kit's JavaScript under the same options (tsconfig.kit.json)
+npm test            # the shared kit's self-test (node --test server/kit/selftest.mjs), then vitest
 npm run test:conventions   # the shared repository conventions (CONVENTIONS.md)
 npm run check       # lint + typecheck + test + conventions: the gate before a push
-npm run test:e2e    # build, serve, walk the core flow over HTTP (scripts/smoke.sh), then in Chromium (scripts/browser-walk.mjs)
+npm run test:e2e    # build, serve, walk the core flow over HTTP (scripts/smoke.sh), then in Chromium (scripts/browser-walk.mjs), then sign-in and the shop (scripts/integrations-walk.mjs)
 npm run test:all    # the unit suite, then the end-to-end walks
 npm run smoke       # the longer portable walk (scripts/smoke.mjs) against a running server
 ```
@@ -443,7 +550,24 @@ listening, and before it has arrived — must show the safety net's note.
 port with a database of its own, waits for `/api/health`, runs `scripts/smoke.sh` and then
 `scripts/browser-walk.mjs` against it, and stops the server by the PID it recorded, printing the
 server log if anything failed. Run either script directly, with `BASE` set, when you already
-have a server up and want to walk that one.
+have a server up and want to walk that one. That server has no keys, as a deployment with none
+has not, and both walks check that `/api/config` says so and that no page draws a Google or Buy
+control.
+
+Then it starts a second server from the same build, with sign in with Google and the shop
+turned on (test credentials from `scripts/e2e-fakes.mjs`) and a fake Google and a fake Stripe
+loaded into its process ahead of Next (`node --import ./scripts/e2e-upstreams.mjs`): they
+replace the global fetch, which is the way out to Google and Stripe that the routes are given,
+and answer Google's token and key addresses and Stripe's API inside the process. The app reads
+no variable that points it at another Google or Stripe; the addresses are the kit's constants.
+`scripts/integrations-walk.mjs` then drives it in Chromium under the same headers and the same
+failures as the browser walk: the controls hidden when `/api/config` answers 404; sign-up with
+Google; Support this app through a stand-in for Stripe's Checkout page, back before the webhook,
+the signed webhook, the thank-you and the badge; a replayed and an unsigned webhook; a password
+account linking Google and signing in with it; a Google account whose address an unlinked
+account holds signing in to nothing; a callback nobody started; deleting the account. Google's
+consent page and Stripe's Checkout are reached by navigation and stood in for with `page.route`,
+and they are the only places a request may leave the site for.
 
 One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
 conventions, build, the Chromium install and then `npm run test:e2e`, each as its own step) and an `audit` job, which
@@ -457,7 +581,9 @@ site add connections to a signed-in account.
 
 `src/instrumentation.ts` runs once at server start and refuses to boot on a misconfigured
 deployment: a missing or too-short `SESSION_SECRET` in production, a relative `APP_BASE_URL`,
-or only one half of the VAPID key pair. Previously a bad `SESSION_SECRET` surfaced as a 500 on
+or only one half of the VAPID key pair. Sign in with Google and the shop do not stop it: one
+that is half configured stays off, and the start prints one line naming what is missing or
+malformed, never a value. Previously a bad `SESSION_SECRET` surfaced as a 500 on
 whichever request first touched encryption, which is a poor way to find out.
 
 The `SESSION_SECRET` check itself runs everywhere, not only in production, because outside it
@@ -523,7 +649,7 @@ of the built app in Chromium under exactly these headers and fails on any violat
 | `style-src 'self'` and `style-src-attr 'unsafe-inline'` | The stylesheet, and `style` attributes: React writes `style` props as attributes, and the components use them for values computed per item (a reason bar's width, the countdown ring, a platform's brand colour). An injected `<style>` element, which can select and leak what a page shows, is still refused. The framework's default not-found page styles itself with one, which is why the app has its own (`src/app/not-found.tsx`). |
 | `img-src 'self' https: data:`, `media-src https:` | Thumbnails and videos come from whichever CDN a connected platform uses; demo posters are inline SVG. |
 | `font-src 'self'` | The display face, which `next/font` downloads at build time and serves from `/_next/static/media`. |
-| `connect-src 'self'`, `worker-src 'self'`, `manifest-src 'self'` | The app's own API, the notification service worker and the web manifest. |
+| `connect-src 'self'`, `worker-src 'self'`, `manifest-src 'self'` | The app's own API, the notification service worker and the web manifest. Sign in with Google and Stripe's Checkout are top-level navigations, which the policy does not govern, so neither adds a source: no Google or Stripe script, frame, font or image is loaded, and the integrations walk measures that under this header. |
 | `base-uri 'none'`, `object-src 'none'` | No page sets a `<base>` or embeds a plugin. |
 | `form-action 'none'` | Every form is sent by its script, so the browser itself never submits one: an injected `<form>` cannot send what is typed into it, or what a password manager fills in, anywhere. A form pressed before the page's scripts have run is refused rather than reloading the page and losing what was typed; the browser walk presses the sign-up form with scripts off and checks exactly that. |
 | `frame-ancestors 'none'` (and `X-Frame-Options: DENY`) | Settings has single-click buttons for signing other devices out and disconnecting platforms, which is exactly what a clickjacking frame wants. |
@@ -789,6 +915,14 @@ Changing a password revokes every other session, keeping only the device making 
 Leaving other sessions live would defeat the point of a hurried password change. Settings also
 shows how many devices are signed in and can sign out the rest without changing the password.
 
+Sign in with Google makes accounts too, so a new account made by it is charged to the same
+sign-up ceilings as the form, the deployment-wide one always and the per-address one behind a
+trusted proxy. Starting a sign-in writes nothing (its state is in a signed cookie), so an
+anonymous visitor cannot grow the database by starting them. `POST /api/checkout` is limited to
+ten an hour per account, keyed on the account, which a client cannot choose. The Stripe webhook
+reads at most 64 KB, under the framework's 128 KB buffer, so an oversized delivery is a 413
+rather than a truncated body; nothing it is sent is trusted until its signature has been checked.
+
 The limiter lives in process, which suits the single-instance SQLite storage. Behind several
 instances it becomes per-instance and the effective limit is the sum, so a shared store or a
 limit at the reverse proxy is the right answer at that point.
@@ -810,6 +944,11 @@ src/lib/archive.ts  Notes, collections and search over the archive
 src/lib/archive-limits.ts  The archive's limits (import-free, safe for client components)
 src/lib/archive-client.ts  Removing a clip from the browser, asking first when it is annotated
 src/lib/account-data.ts  The data export and account deletion
+src/lib/integrations/  Sign in with Google and the shop: configuration, the Google flow, Stripe
+src/lib/google-accounts.ts  What a Google sign-in does to the accounts (sign in, sign up, link)
+src/lib/site-config.ts  What a page reads from /api/config, and the words it says about it
+server/kit/         The shared sign-in, shop and webhook kit, byte for byte the canonical copy
+server/catalogue.ts What the shop sells: Support this app
 src/lib/push.ts     Web Push subscriptions and the one daily notification
 src/lib/effects.ts  Haptics, chimes and motion preferences
 src/proxy.ts        Puts the security headers, and a fresh script nonce, on every response
@@ -823,4 +962,6 @@ src/lib/db.ts       SQLite schema (node:sqlite)
 test/               Unit tests
 scripts/smoke.sh    The end-to-end walk over HTTP
 scripts/browser-walk.mjs  The end-to-end walk in Chromium, under the real headers
+scripts/integrations-walk.mjs  Sign in with Google and the shop in Chromium, against fakes
+                    loaded into the server (scripts/e2e-upstreams.mjs, scripts/e2e-fakes.mjs)
 ```

@@ -25,6 +25,38 @@ export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_EMAIL_LENGTH = 254;
 export const MAX_PASSWORD_LENGTH = 256;
 
+/**
+ * Whether an address can be an account's: at most MAX_EMAIL_LENGTH, and shaped like one. The
+ * length is decided first and an address past it is never matched: EMAIL_RE backtracks
+ * quadratically over a run of dots (`a@` and 60,000 of them took eight seconds), and those
+ * seconds are the only thread the server has. At MAX_EMAIL_LENGTH the worst case is a fraction
+ * of a millisecond.
+ */
+export function isAcceptableEmail(email: string): boolean {
+  return email.length <= MAX_EMAIL_LENGTH && EMAIL_RE.test(email);
+}
+
+/**
+ * What `password_hash` holds for an account made by signing in with Google, which has no
+ * password. It is not a hash `verifyPassword` can match (no `scrypt$` prefix), so nothing typed
+ * at the password sign-in opens such an account, and `signIn` spends the decoy hash on it so
+ * the answer takes as long as any other wrong password.
+ */
+export const NO_PASSWORD = "none";
+
+/** Whether an account has a password at all; one made with Google has none. */
+export function hasPassword(row: Pick<UserRow, "password_hash">): boolean {
+  return row.password_hash !== NO_PASSWORD;
+}
+
+/**
+ * The deployment-wide ceiling on new accounts, and the per-address one behind a trusted proxy.
+ * Shared by the sign-up form (`/api/auth/signup`) and the first sign-in with a Google account
+ * (`src/lib/google-accounts.ts`), which also makes an account: either way is one more account.
+ */
+export const SIGNUP_PER_IP = { limit: 5, windowMs: 60 * 60_000 };
+export const SIGNUP_PER_DEPLOYMENT = { key: "signup:deployment", limit: 200, windowMs: 60 * 60_000 };
+
 export async function signUp(input: {
   email: string;
   displayName: string;
@@ -33,11 +65,9 @@ export async function signUp(input: {
 }): Promise<UserRow> {
   const email = input.email.trim().toLowerCase();
   const displayName = input.displayName.trim();
-  // The length is decided first and an address past it is never matched: EMAIL_RE backtracks
-  // quadratically over a run of dots (`a@` and 60,000 of them took eight seconds), this route is
-  // unauthenticated with a body of up to 64 KB, and those seconds are the only thread the server
-  // has. At MAX_EMAIL_LENGTH the worst case is a fraction of a millisecond.
-  if (email.length > MAX_EMAIL_LENGTH || !EMAIL_RE.test(email)) throw new UserFacingError("Enter a valid email address");
+  // This route is unauthenticated with a body of up to 64 KB: see isAcceptableEmail for why the
+  // length is decided before the pattern runs.
+  if (!isAcceptableEmail(email)) throw new UserFacingError("Enter a valid email address");
   if (displayName.length < 1 || displayName.length > 60) throw new UserFacingError("Pick a display name (1-60 characters)");
   if (input.password.length < MIN_PASSWORD_LENGTH) {
     throw new UserFacingError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
@@ -80,10 +110,12 @@ export async function signIn(email: string, password: string): Promise<UserRow> 
   // would accept today, and refusing it here would be a permanent lockout, with no reset flow
   // to recover through. MAX_REQUEST_BYTES already bounds what an anonymous caller can send.
   const row = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email.trim().toLowerCase()) as UserRow | undefined;
-  // Hash against a decoy when there is no such account, so both outcomes cost the same.
-  const ok = await verifyPassword(password, row ? row.password_hash : await decoyHash());
-  if (!row || !ok) throw new UserFacingError(WRONG_CREDENTIALS);
-  return row;
+  // Hash against a decoy when there is no such account, or when it has no password (one made
+  // with Google), so every outcome costs the same.
+  const usable = row && hasPassword(row) ? row : undefined;
+  const ok = await verifyPassword(password, usable ? usable.password_hash : await decoyHash());
+  if (!usable || !ok) throw new UserFacingError(WRONG_CREDENTIALS);
+  return usable;
 }
 
 export interface PasswordChangeResult {
@@ -107,6 +139,7 @@ export async function changePassword(
   const db = getDb();
   const row = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
   if (!row) throw new UserFacingError("Account not found");
+  if (!hasPassword(row)) throw new UserFacingError("This account signs in with Google and has no password to change");
   // The current password is only ever compared, never stored, so the ceiling does not apply to
   // it: an account whose password predates the ceiling has to be able to change it.
   if (!(await verifyPassword(currentPassword, row.password_hash))) {

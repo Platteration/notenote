@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
+import { isSupporter } from "@/lib/integrations";
 import { currentUser } from "@/lib/session";
 
 /**
@@ -14,7 +15,7 @@ export default async function NotFound() {
   const user = await currentUser();
   return (
     <main className="shell">
-      <Nav signedIn={Boolean(user)} email={user?.email} />
+      <Nav signedIn={Boolean(user)} email={user?.email} supporter={user ? isSupporter(user.id) : false} />
       <section className="hero hero-page">
         <h1>That page isn&apos;t here</h1>
         <p>The address may be mistyped, or the page may have moved.</p>

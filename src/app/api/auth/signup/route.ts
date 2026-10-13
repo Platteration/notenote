@@ -1,10 +1,10 @@
-import { signUp } from "@/lib/auth";
+import { SIGNUP_PER_DEPLOYMENT, SIGNUP_PER_IP, signUp } from "@/lib/auth";
 import { assertSameSite, errorResponse, json, readJson } from "@/lib/api";
 import { clientKey, rateLimit, refundRateLimit } from "@/lib/rate-limit";
 import { createSession } from "@/lib/session";
 
 /** Enough for a household behind one address, low enough to stop bulk registration. */
-const PER_IP = { limit: 5, windowMs: 60 * 60_000 };
+const PER_IP = SIGNUP_PER_IP;
 /**
  * A ceiling for the whole deployment, applied whether or not the client can be identified. It
  * exists only to bound bulk registration when no trusted proxy names the client and the
@@ -22,8 +22,8 @@ const PER_IP = { limit: 5, windowMs: 60 * 60_000 };
  * request holds its place only while it is in flight, so a burst of junk can crowd the ceiling
  * for the milliseconds it takes to reject them, and nothing longer.
  */
-const PER_DEPLOYMENT = { limit: 200, windowMs: 60 * 60_000 };
-const DEPLOYMENT_KEY = "signup:deployment";
+const PER_DEPLOYMENT = SIGNUP_PER_DEPLOYMENT;
+const DEPLOYMENT_KEY = SIGNUP_PER_DEPLOYMENT.key;
 
 export async function POST(req: Request) {
   let reserved = false;

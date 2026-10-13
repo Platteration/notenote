@@ -22,7 +22,10 @@ that comes from outside it (files, share links, imported data, network
 responses, user-supplied text rendered into a page), and the website it
 serves: the response headers and content security policy on every response
 (`src/lib/security-headers.ts`, written out in the README), and the files it
-serves beside its pages.
+serves beside its pages. Where a deployment turns them on, sign in with Google
+and the Stripe webhook are in scope too (`src/lib/integrations/`,
+`src/lib/google-accounts.ts`, and the shared kit in `server/kit/`, whose fixes
+are made to its canonical copy).
 
 `/.well-known/security.txt` on a running instance points here. Its `Expires`
 date is renewed before it lapses; `test/site-files.test.ts` fails once it has.

@@ -150,6 +150,11 @@ describe.each(SCHEMES)("$name theme contrast", ({ name, selector, badges, accent
     expect(contrast(parseHex(required(ink)), pill), `${name} ${ink}`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
+  it("--badge-live-ink clears WCAG AA on its pill on the page, where the navigation's supporter badge sits", () => {
+    const pill = badges === "outline" ? page : composite([57, 217, 138], 0.15, page);
+    expect(contrast(parseHex(required("--badge-live-ink")), pill), `${name} supporter badge`).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
   /**
    * Every accent is checked under every scheme. A missing block throws in ruleFor; a block
    * without the descendant selector (which the picker swatches rely on) fails the first test.

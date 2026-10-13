@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Countdown } from "./Countdown";
 import { NotificationSetting } from "./NotificationSetting";
-import { SecurityPanel } from "./SecurityPanel";
+import { SecurityPanel, type GoogleLinkState } from "./SecurityPanel";
 import { chime, haptic, useReduceMotion } from "@/lib/effects";
 import { ACCENT_CATALOGUE, DEFAULT_ACCENT } from "@/lib/accent";
 import { requestJson } from "@/lib/client-api";
@@ -64,6 +64,9 @@ export function SettingsForm({
   max,
   email,
   sessions,
+  google,
+  hasPassword,
+  supporter,
 }: {
   initial: Settings;
   initialWindow: DailyWindow;
@@ -71,6 +74,10 @@ export function SettingsForm({
   max: number;
   email: string;
   sessions: number;
+  google: GoogleLinkState;
+  hasPassword: boolean;
+  /** Holds the supporter badge, which goes with the account. */
+  supporter: boolean;
 }) {
   const router = useRouter();
   const [timezone, setTimezone] = useState(initial.timezone);
@@ -302,7 +309,7 @@ export function SettingsForm({
         <NotificationSetting />
       </div>
 
-      <SecurityPanel initialSessions={sessions} />
+      <SecurityPanel initialSessions={sessions} google={google} hasPassword={hasPassword} />
 
       <div className="card">
         <h2>Your data</h2>
@@ -320,7 +327,8 @@ export function SettingsForm({
         {deleteOpen && (
           <div className="cred-form">
             <p className="hint" style={{ marginBottom: 10 }}>
-              This removes your account, every connection and all watch history immediately. It cannot be undone. Type{" "}
+              This removes your account, every connection and all watch history immediately. It cannot be undone.
+              {supporter && " Your supporter badge goes with it; the payment itself stays with Stripe."} Type{" "}
               <strong>{email}</strong> to confirm.
             </p>
             <div className="field">

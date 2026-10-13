@@ -4,6 +4,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { requestJson } from "@/lib/client-api";
 import { safeNextPath } from "@/lib/safe-path";
+import { googleStartHref, SIGN_IN_WITH_GOOGLE, signInNotice } from "@/lib/site-config";
+import { useForgetParam, useSiteConfig } from "@/lib/site-config-client";
 
 export function AuthForm() {
   const router = useRouter();
@@ -12,8 +14,12 @@ export function AuthForm() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // A Google sign-in that came back without one says why, once: the word is read here and the
+  // address put back below, so a reload says nothing.
+  const [error, setError] = useState<string | null>(() => signInNotice(params.get("signin")));
   const [busy, setBusy] = useState(false);
+  const site = useSiteConfig();
+  useForgetParam("signin", params.has("signin"));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -74,6 +80,16 @@ export function AuthForm() {
           {busy ? "One moment…" : mode === "signup" ? "Start my Daily Scroll" : "Sign in"}
         </button>
       </form>
+      {/* Drawn only in the browser, once /api/config has answered, so the browser's own
+          timezone can go with it for an account the sign-in makes; the server checks both. */}
+      {site?.google && (
+        <div className="auth-alt">
+          <a className="btn btn-ghost btn-block" href={googleStartHref(params.get("next"), Intl.DateTimeFormat().resolvedOptions().timeZone)}>
+            {SIGN_IN_WITH_GOOGLE}
+          </a>
+          <p className="hint">A new Google account makes a new account here. To sign in to an account you made with a password, link Google from Settings first.</p>
+        </div>
+      )}
     </div>
   );
 }

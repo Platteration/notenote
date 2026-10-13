@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # The end-to-end run, self-contained: build the app, serve it on a database of its own, walk
 # scripts/smoke.sh (the API, over HTTP) and then scripts/browser-walk.mjs (the pages, in
-# Chromium, under the headers the server really sends) against it, and stop it again.
+# Chromium, under the headers the server really sends) against it, and stop it again. Then a
+# second server from the same build, with sign in with Google and the shop turned on and a fake
+# Google and a fake Stripe loaded into its process (scripts/e2e-upstreams.mjs), for
+# scripts/integrations-walk.mjs. The first server has neither turned on, as a deployment with no
+# keys has not, and its walks check nothing about them is drawn.
 # `npm run test:e2e` is the whole thing, and CI runs exactly this rather than a copy of the
 # steps. The browser walk needs Playwright's Chromium: `npx playwright install chromium` once.
 #
@@ -29,21 +33,41 @@ export DATA_DIR
 
 LOG="$(mktemp)"
 SERVER_PID=""
+LOG2="$(mktemp)"
+SERVER2_PID=""
+DATA_DIR2="$(mktemp -d)"
 
 cleanup() {
   status=$?
-  if [ -n "$SERVER_PID" ]; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
+  for pid in "$SERVER_PID" "$SERVER2_PID"; do
+    if [ -n "$pid" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
   if [ "$status" -ne 0 ]; then
     echo "--- server log ---" >&2
     cat "$LOG" >&2 || true
+    echo "--- server log (sign-in and shop on) ---" >&2
+    cat "$LOG2" >&2 || true
   fi
-  rm -f "$LOG"
+  rm -f "$LOG" "$LOG2"
   [ -z "$SCRATCH_DATA_DIR" ] || rm -rf "$SCRATCH_DATA_DIR"
+  rm -rf "$DATA_DIR2"
 }
 trap cleanup EXIT
+
+# Wait for a server to answer /api/health, or say why it never did.
+await_health() {
+  local port="$1" pid="$2"
+  for _ in $(seq 1 60); do
+    if curl -sf "http://localhost:$port/api/health" > /dev/null; then return 0; fi
+    if ! kill -0 "$pid" 2>/dev/null; then echo "the server on $port exited before it answered" >&2; exit 1; fi
+    sleep 1
+  done
+  echo "the server on $port did not answer /api/health within 60 seconds" >&2
+  exit 1
+}
 
 npm run build
 
@@ -51,13 +75,23 @@ npm run build
 node node_modules/next/dist/bin/next start > "$LOG" 2>&1 &
 SERVER_PID=$!
 
-ready=""
-for _ in $(seq 1 60); do
-  if curl -sf "http://localhost:$PORT/api/health" > /dev/null; then ready=yes; break; fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then echo "the server exited before it answered" >&2; exit 1; fi
-  sleep 1
-done
-[ -n "$ready" ] || { echo "the server did not answer /api/health within 60 seconds" >&2; exit 1; }
+await_health "$PORT" "$SERVER_PID"
 
 BASE="http://localhost:$PORT" bash scripts/smoke.sh
 BASE="http://localhost:$PORT" node scripts/browser-walk.mjs
+
+# The second server: sign in with Google and the shop on, with the test credentials the fakes
+# expect, its own scratch database, and APP_BASE_URL naming the address the walk uses (an
+# http://localhost base is the one plain-http address sign-in accepts).
+PORT2="$(node -e 'const s = require("net").createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });')"
+DATA_DIR2_FOR_NODE="$DATA_DIR2"
+if command -v cygpath >/dev/null 2>&1; then DATA_DIR2_FOR_NODE="$(cygpath -w "$DATA_DIR2")"; fi
+(
+  eval "$(node scripts/e2e-fakes.mjs --env)"
+  export PORT="$PORT2" DATA_DIR="$DATA_DIR2_FOR_NODE" APP_BASE_URL="http://localhost:$PORT2"
+  exec node --import ./scripts/e2e-upstreams.mjs node_modules/next/dist/bin/next start
+) > "$LOG2" 2>&1 &
+SERVER2_PID=$!
+await_health "$PORT2" "$SERVER2_PID"
+
+BASE="http://localhost:$PORT2" node scripts/integrations-walk.mjs

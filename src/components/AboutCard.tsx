@@ -1,3 +1,5 @@
+import { integrations } from "@/lib/integrations";
+import { GOOGLE_PRIVACY, STRIPE_PRIVACY } from "@/lib/site-config";
 import { APP_NAME, APP_VERSION, SOURCE_URL } from "@/lib/version";
 
 /**
@@ -5,6 +7,9 @@ import { APP_NAME, APP_VERSION, SOURCE_URL } from "@/lib/version";
  * changes after the page is drawn.
  */
 export function AboutCard() {
+  // What leaves this server when sign in with Google or the shop is on is said only where it
+  // is: a deployment with neither turned on talks to neither.
+  const { config } = integrations();
   return (
     <div className="card">
       <h2>About</h2>
@@ -22,6 +27,8 @@ export function AboutCard() {
         server talks to the platforms you connected to build your hour, clips and thumbnails load from those platforms
         directly, and if you turn notifications on it sends your browser one push a day saying only that the hour is open —
         Export takes all of it as JSON and Delete removes it at once.
+        {config.signIn && ` ${GOOGLE_PRIVACY}`}
+        {config.shop && ` ${STRIPE_PRIVACY}`}
       </p>
     </div>
   );

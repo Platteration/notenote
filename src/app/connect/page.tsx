@@ -4,6 +4,7 @@ import { ConnectionsPanel } from "@/components/ConnectionsPanel";
 import { Nav } from "@/components/Nav";
 import { listConnections } from "@/lib/connections";
 import { windowFor } from "@/lib/feed";
+import { isSupporter } from "@/lib/integrations";
 import { currentUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export default async function ConnectPage() {
   const win = windowFor(user.id);
   return (
     <main className="shell">
-      <Nav signedIn email={user.email} />
+      <Nav signedIn email={user.email} supporter={isSupporter(user.id)} />
       <section className="hero hero-page">
         <h1>Connections</h1>
         <p>Everything you connect feeds one curated hour. Disconnect any time.</p>

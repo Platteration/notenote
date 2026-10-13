@@ -3,6 +3,7 @@ import { Nav } from "@/components/Nav";
 import { ScrollView } from "@/components/ScrollView";
 import { LockedView } from "@/components/LockedView";
 import { getFeed } from "@/lib/feed";
+import { isSupporter } from "@/lib/integrations";
 import { currentUser } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
 
@@ -17,7 +18,7 @@ export default async function FeedPage() {
   if (feed.status === "locked") {
     return (
       <main className="shell">
-        <Nav signedIn email={user.email} />
+        <Nav signedIn email={user.email} supporter={isSupporter(user.id)} />
         <LockedView initial={feed} prefs={prefs} />
       </main>
     );
