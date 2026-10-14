@@ -58,16 +58,21 @@ reports in; `public/.well-known/security.txt` has an `Expires` that a test fails
 
 Both are off until the operator sets their variables (README, "Sign in with Google and Support
 this app"); with none set `/api/config` says so, every route below 404s and no page draws a
-Google or Buy control. The shared kit sits at `server/kit/`, byte for byte the canonical copy:
+Google or Buy control. The shared kit sits at `server/kit/`, byte for byte the canonical copy,
+its `.d.ts` files included (the conventions test pins all 21 files by one hash, `KIT_SHA`):
 never edit it (a change goes to the canonical copy and is copied everywhere). `npm test` runs
 its self-test (`node --test server/kit/selftest.mjs`) before vitest, ESLint lints it under this
 repository's configuration unchanged, and `npm run typecheck` checks its JavaScript under every
 option of `tsconfig.json` through `tsconfig.kit.json` (allowJs and checkJs, which the app's own
 config leaves off); the app imports it through the `.d.ts` files beside each module. This app
 uses the kit's `google.js`, `stripe.js`, `crypto.js` and `http.js` from inside its own stack and
-keeps its own accounts, sessions and database; the kit's `app.js`, `node.js` and `cloudflare.js`
-are for apps with no server and are not run here (the catalogue test reads `validateCatalogue`
-from `app.js`). The catalogue is `server/catalogue.ts`, in TypeScript because `allowJs` is off.
+keeps its own accounts, sessions and database, and reads `validateCatalogue` and the `Catalogue`
+type from `config.js`, the kit's stateless module for a server of its own (the catalogue and its
+test); the kit's `app.js`, `node.js` and `cloudflare.js` are for apps with no server and are
+neither imported nor run here. So the kit's own checkout rules (reusing the session it gave an
+account for a product until the webhook lands, `payment_pending`) are not this app's: `shop.ts`
+makes a new Checkout Session for every Buy, and the Support card keeps Buy disabled while one
+press is out. The catalogue is `server/catalogue.ts`, in TypeScript because `allowJs` is off.
 `src/lib/integrations/` is the configuration (`config.ts`), the Google flow (`google.ts`) and the
 shop (`shop.ts`), put together by `createIntegrations({ env, fetch })`; the routes use one
 instance whose way out is the global `fetch`.

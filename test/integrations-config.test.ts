@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import catalogue from "../server/catalogue";
-import { priceVariable as kitPriceVariable, validateCatalogue } from "../server/kit/app.js";
+import { priceVariable as kitPriceVariable, validateCatalogue } from "../server/kit/config.js";
 import { priceVariable, readIntegrationConfig, signInOrigin } from "@/lib/integrations/config";
 import { CLIENT_ID, CLIENT_SECRET, PRICE_ID, STRIPE_KEY, WEBHOOK_SECRET } from "./helpers/fake-upstreams";
 

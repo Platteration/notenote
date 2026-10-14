@@ -570,17 +570,22 @@ and answer Google's token and key addresses and Stripe's API inside the process.
 no variable that points it at another Google or Stripe; the addresses are the kit's constants.
 `scripts/integrations-walk.mjs` then drives it in Chromium under the same headers and the same
 failures as the browser walk: the controls hidden when `/api/config` answers 404; sign-up with
-Google; Support this app through a stand-in for Stripe's Checkout page, back before the webhook,
-the signed webhook, the thank-you and the badge; a replayed and an unsigned webhook; a password
+Google; Support this app through a stand-in for Stripe's Checkout page (Buy disabled while its
+press is out, so a second press asks for no second Checkout), back before the webhook, the
+signed webhook, the thank-you and the badge; a replayed and an unsigned webhook; a password
 account linking Google and signing in with it; a Google account whose address an unlinked
 account holds signing in to nothing (the notice drawn once `/api/config` has said Google is
 on); a callback nobody started; deleting the account. Google's consent page and Stripe's
 Checkout are reached by navigation and stood in for with `page.route`, and they are the only
 places a request may leave the site for.
 
-One GitHub Actions workflow, `ci.yml`, runs on every push: a `check` job (lint, typecheck, test,
-conventions, build, the Chromium install and then `npm run test:e2e`, each as its own step) and an `audit` job, which
-runs `npm audit --omit=dev --audit-level=high` against the lockfile.
+One GitHub Actions workflow, `ci.yml`, runs on every push, both jobs on `ubuntu-24.04`: a `check`
+job (lint, typecheck, test, conventions, build, the Chromium install and then `npm run test:e2e`,
+each as its own step) and an `audit` job, which runs `node .github/audit/npm-audit.mjs`, the
+fleet's shared audit gate: `npm audit --omit=dev` against the lockfile, failing on every advisory
+at high or above that `.github/audit/accepted.json` does not accept. This repository has no such
+list, so it accepts nothing: the job fails on what `--audit-level=high` failed on, and on any
+report or lockfile it cannot read.
 
 Demo connections are created with a POST, never a link. The session cookie is `SameSite=Lax`,
 which still travels on a top-level cross-site GET, so a state-changing GET would let another

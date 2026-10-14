@@ -9,11 +9,12 @@ export function kvStore(namespace: () => KvNamespace): Store;
 /**
  * The Pages Functions handler for an app's catalogue.
  * @param {unknown} catalogueInput
- * @returns {(context: { request: Request, env: Record<string, unknown> }) => Promise<Response>}
+ * @returns {(context: { request: Request, env: Record<string, unknown>, waitUntil?: (promise: Promise<unknown>) => void }) => Promise<Response>}
  */
 export function pagesHandler(catalogueInput: unknown): (context: {
     request: Request;
     env: Record<string, unknown>;
+    waitUntil?: (promise: Promise<unknown>) => void;
 }) => Promise<Response>;
 export type Store = import("./store.js").Store;
 /**

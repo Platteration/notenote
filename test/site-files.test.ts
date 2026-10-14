@@ -25,9 +25,16 @@ describe("/.well-known/security.txt", () => {
   };
 
   it("sends reports where SECURITY.md says they go", () => {
-    // SECURITY.md asks for GitHub's private vulnerability reporting, not a public issue.
-    expect(readFileSync("SECURITY.md", "utf8")).toContain("Report a vulnerability");
-    expect(one("Contact")).toBe("https://github.com/Platteration/notenote/security/advisories/new");
+    // SECURITY.md asks for GitHub's private vulnerability reporting, not a public issue, and,
+    // while that is switched off on the repository, for an issue that carries no details. So the
+    // private form comes first and the issues page last, both on this repository.
+    const security = readFileSync("SECURITY.md", "utf8").replace(/\s+/g, " ");
+    expect(security).toContain("Report a vulnerability");
+    expect(security).toContain("open an issue that says only that you have a security report and how to reach you");
+    expect(txt.filter(([k]) => k === "Contact").map(([, v]) => v)).toEqual([
+      "https://github.com/Platteration/notenote/security/advisories/new",
+      "https://github.com/Platteration/notenote/issues",
+    ]);
     expect(one("Policy")).toBe("https://github.com/Platteration/notenote/blob/main/SECURITY.md");
     expect(one("Preferred-Languages")).toBe("en");
   });

@@ -5,12 +5,12 @@
  * every platform, the hour and the archive stay the same for everyone. Its Stripe Price id is
  * STRIPE_PRICE_SUPPORTER.
  *
- * The shape is the shared kit's (`server/kit/app.js`, `validateCatalogue`), so the same file
+ * The shape is the shared kit's (`server/kit/config.js`, `validateCatalogue`), so the same file
  * would drive the kit's own backend; `test/integrations-config.test.ts` holds it to that check.
  * The Daily Scroll does not run the kit's backend, though: it has accounts and a database of its
  * own, so the shop is `src/lib/integrations/shop.ts`, using the kit's `stripe.js`.
  */
-import type { Catalogue } from "./kit/app.js";
+import type { Catalogue } from "./kit/config.js";
 
 const catalogue = {
   app: "notenote",

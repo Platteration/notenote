@@ -8,10 +8,11 @@
  *
  * It walks: the controls hidden when `/api/config` answers 404, and drawn when it says they are
  * on; sign-up with Google (a new account keyed by Google's `sub`, with no password); Support this
- * app (Checkout, back before the webhook, the webhook, the thank-you, the badge); a replayed
- * webhook; sign out; a password account linking Google from Settings and then signing in with
- * it; a Google account whose address belongs to an account here that never linked it, which
- * signs in to nothing; a callback nobody started; and deleting the Google account's account.
+ * app (one press of Buy at a time, Checkout, back before the webhook, the webhook, the thank-you,
+ * the badge); a replayed webhook; sign out; a password account linking Google from Settings and
+ * then signing in with it; a Google account whose address belongs to an account here that never
+ * linked it, which signs in to nothing; a callback nobody started; and deleting the Google
+ * account's account.
  *
  * Throughout it fails, as scripts/browser-walk.mjs does, on any Content-Security-Policy
  * violation, uncaught exception or console error, any response from the site without the
@@ -226,10 +227,29 @@ try {
   await card.getByText("Checkout didn't start. Try again.").waitFor();
   if (new URL(page.url()).pathname !== "/settings" || outside.includes("stripe")) fail("Buy followed an address that is not Stripe's Checkout");
 
-  step("Support this app: Checkout, back before the webhook, then the webhook, the thank-you and the badge");
+  step("Support this app: one Buy at a time, Checkout, back before the webhook, then the webhook, the thank-you and the badge");
+  // The press is held at the site until the button has been seen disabled and pressed again: a
+  // second press while the first is out must ask for no second Checkout (the kit's README, "For
+  // the page"), since every press here makes a Checkout Session of its own.
+  const presses = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/checkout") presses.push(request.method());
+  });
+  let release = () => {};
+  const released = new Promise((resolve) => (release = resolve));
+  await page.route((url) => url.pathname === "/api/checkout", async (route) => {
+    await released;
+    await route.continue();
+  }, { times: 1 });
   await buy.click();
+  const opening = card.getByRole("button", { name: "Opening Checkout…" });
+  await opening.waitFor();
+  if (!(await opening.isDisabled())) fail("Buy was not disabled while its press was out");
+  await opening.click({ force: true });
+  release();
   await page.waitForURL(`${ORIGIN}/settings`);
   await card.getByText("Confirming your payment with Stripe…").waitFor();
+  if (presses.length !== 1 || checkouts.length !== 1) fail(`two presses of Buy asked /api/checkout ${presses.length} times and made ${checkouts.length} Checkout Sessions`);
   const [session] = checkouts;
   if (!session || session.metadata.app !== "notenote" || session.metadata.user !== googleUserId || session.client_reference_id !== googleUserId || session.metadata.product !== "supporter") {
     fail(`the Checkout Session was made with ${JSON.stringify(session)}`);

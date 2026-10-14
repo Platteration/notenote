@@ -64,6 +64,25 @@ export function createCheckoutSession(options: {
     url: string;
 }>;
 /**
+ * A Checkout Session's state: `open` (it can still be paid), `complete` (it was paid, or a
+ * delayed payment is on its way) or `expired` (it can no longer be paid), its URL while it is
+ * open, and the ids of the PaymentIntent (payment mode) and the Subscription (subscription
+ * mode) it made, when Stripe names them: what the webhook records the purchase under.
+ * @param {{ fetch: Fetch, key: string, id: string, timeoutMs?: number }} options
+ * @returns {Promise<{ status: 'open' | 'complete' | 'expired', url: string | null, paymentIntent: string | null, subscription: string | null }>}
+ */
+export function getCheckoutSession({ fetch, key, id, timeoutMs }: {
+    fetch: Fetch;
+    key: string;
+    id: string;
+    timeoutMs?: number;
+}): Promise<{
+    status: "open" | "complete" | "expired";
+    url: string | null;
+    paymentIntent: string | null;
+    subscription: string | null;
+}>;
+/**
  * Creates a Customer Portal session for `customer`, returning to `returnUrl`.
  * @param {{ fetch: Fetch, key: string, customer: string, returnUrl: string, idempotencyKey: string, timeoutMs?: number }} options
  * @returns {Promise<{ url: string }>}
@@ -123,11 +142,26 @@ export const API_BASE: "https://api.stripe.com/v1";
 /** Seconds a webhook's timestamp may be from now, either way. */
 export const TOLERANCE_SECONDS: 300;
 /** @typedef {(input: string, init?: RequestInit) => Promise<Response>} Fetch */
-/** A failed Stripe call. `status` is Stripe's HTTP status, or 0 when none arrived. */
+/**
+ * A failed Stripe call. `status` is Stripe's HTTP status, or 0 when none arrived. `code` and
+ * `param` are Stripe's error code (`resource_missing`) and the parameter it names (`customer`),
+ * when its answer carried them as identifiers, else null: they say what failed and may be
+ * logged, unlike Stripe's message, which is never read.
+ */
 export class StripeError extends Error {
-    /** @param {number} status */
-    constructor(status: number);
+    /**
+     * @param {number} status
+     * @param {{ code?: string | null, param?: string | null }} [detail]
+     */
+    constructor(status: number, detail?: {
+        code?: string | null;
+        param?: string | null;
+    });
     status: number;
+    /** @type {string | null} */
+    code: string | null;
+    /** @type {string | null} */
+    param: string | null;
 }
 export type PriceInfo = {
     /**
