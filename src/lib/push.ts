@@ -8,7 +8,7 @@
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { getDb, now } from "./db";
 import { assertPublicHost, assertPublicUrl, publicSocketLookup } from "./net-guard";
-import { publicRequest } from "./public-request";
+import https from "node:https";
 
 export interface StoredSubscription {
   endpoint: string;
@@ -200,13 +200,13 @@ export async function notifyHourOpen(userId: string, dayKey: string, minutes: nu
       }
       let status: number;
       try {
-        status = await deliver(row, payload);
-      } catch {
-        // Refused by the guard, unreachable, or past the deadline: tried again on the next run.
-        result.failed++;
-        return;
-      }
-      if (status >= 200 && status <= 299) {
+        assertPublicUrl(row.endpoint);
+        const agent = new https.Agent({ keepAlive: false, lookup: publicSocketLookup() });
+        try {
+          await webpush.sendNotification(toWebPush(row), payload, { TTL: 60 * 50, timeout: 10_000, agent });
+        } finally {
+          agent.destroy();
+        }
         db.prepare("UPDATE push_subscriptions SET last_open_day = ? WHERE endpoint = ?").run(dayKey, row.endpoint);
         result.sent++;
       } else if (status === 404 || status === 410) {

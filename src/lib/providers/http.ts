@@ -166,10 +166,7 @@ export async function getJson<T>(provider: string, url: string, init?: RequestIn
       throw new BlockedHostError(next.protocol, "only http and https redirects are followed");
     }
     // The whole point of the guard is that the destination is checked, not merely the name
-    // that was typed. A redirect is a new destination. The next hop's socket checks the
-    // addresses its name resolves to and connects to those alone (publicSocketLookup in
-    // net-guard.ts), so a name that rebinds has no second answer to give, over http or https;
-    // this catches an IP literal, which never reaches a lookup.
+    // that was typed. A redirect is a new destination.
     assertPublicUrl(next.href);
     if (new URL(target).origin !== next.origin) {
       // A bearer token is issued for one origin; a redirect elsewhere must not carry it.

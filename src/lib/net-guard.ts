@@ -8,14 +8,8 @@
  * https service with a trusted certificate would have part of its response handed back in the
  * error message.
  *
- * The connection is what is checked, not only the name. Provider requests (`getJson`, every hop
- * of every redirect) and push delivery open their sockets through `publicSocketLookup`, which
- * resolves the name once, refuses the whole answer if any address in it is private, and hands
- * those same addresses to the connection: a name that answers a public address to one query and
- * a private one to the next (DNS rebinding) cannot get a different answer past the check, over
- * plain http or https. An IP literal never reaches a lookup, so `assertPublicUrl` checks it
- * before the socket opens. `assertPublicHost` stays where a person names a host (a Bluesky PDS,
- * a push endpoint), so they hear at once that it is refused; it is not what stops the request.
+ * Requests and push delivery use publicSocketLookup: validation happens inside the socket's
+ * lookup and those same addresses are handed to the connection, closing DNS rebinding.
  */
 import { lookup } from "node:dns/promises";
 import net from "node:net";

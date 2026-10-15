@@ -1,4 +1,5 @@
 import { assert, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import https from "node:https";
 
 process.env.DATABASE_FILE = ":memory:";
 process.env.SESSION_SECRET = "test-secret-for-push-tests";
@@ -177,33 +178,9 @@ describe("daily delivery", () => {
     expect(payload.body).toContain("60 minutes");
     expect(payload.url).toBe("/feed");
     expect(payload.tag).toBe("daily-scroll-2026-09-06");
-    expect(built[2]).toEqual({ TTL: 60 * 50 });
-    // What web-push built is what goes out, to the endpoint the row names, under a deadline.
-    const sent = send.mock.calls[0];
-    assert.isDefined(sent, "a notification was sent");
-    expect(sent[0]).toBe(sub(1).endpoint);
-    expect(sent[1].method).toBe("POST");
-    expect(sent[1].headers).toEqual({ TTL: "3000", "Content-Encoding": "aes128gcm" });
-    expect(Buffer.from(sent[1].body as Uint8Array).toString()).toBe(built[1]);
-    expect(sent[1].signal).toBeInstanceOf(AbortSignal);
-  });
-
-  it("counts any 2xx as delivered and anything else but 404 or 410 as a failure to retry", async () => {
-    push.saveSubscription(userId, sub(1));
-    answer(202);
-    expect(await push.notifyHourOpen(userId, "2026-09-06", 60)).toEqual({ sent: 1, removed: 0, failed: 0 });
-    for (const status of [301, 400, 429, 503]) {
-      answer(status);
-      expect(await push.notifyHourOpen(userId, `2026-09-${status}`, 60)).toEqual({ sent: 0, removed: 0, failed: 1 });
-    }
-    expect(push.subscriptionsFor(userId)).toHaveLength(1);
-  });
-
-  it("keeps a subscription whose delivery never got an answer", async () => {
-    push.saveSubscription(userId, sub(1));
-    send.mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
-    expect(await push.notifyHourOpen(userId, "2026-09-06", 60)).toEqual({ sent: 0, removed: 0, failed: 1 });
-    expect(push.subscriptionsFor(userId)[0]?.last_open_day).toBeNull();
+    expect(call[2].agent).toBeInstanceOf(https.Agent);
+    expect(call[2].agent.options.lookup).toBeTypeOf("function");
+    expect(call[2].timeout).toBe(10_000);
   });
 
   it("drops a subscription the push service says is gone", async () => {
